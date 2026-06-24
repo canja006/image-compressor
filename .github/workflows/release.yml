@@ -1,0 +1,64 @@
+name: Release
+
+# Build signed-ready installers for both desktop platforms from a single version tag.
+# Push a tag like `v0.1.0` (or run manually) and this builds Windows + macOS bundles and
+# attaches them to a draft GitHub Release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: '--target universal-apple-darwin'
+          - platform: windows-latest
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build the app and publish the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional signing — add these repository secrets to enable them:
+          #   macOS:   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+          #            APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+          #   Windows: configure Authenticode via tauri.conf.json bundle.windows
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Image Compressor ${{ github.ref_name }}'
+          releaseBody: 'Download the installer for your platform from the assets below.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
