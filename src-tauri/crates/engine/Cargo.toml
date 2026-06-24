@@ -1,0 +1,22 @@
+[package]
+name = "engine"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust target-size image compression engine (no Tauri/OS-specific code)."
+license = "MIT"
+
+[lib]
+name = "engine"
+path = "src/lib.rs"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "webp",
+    "tiff",
+] }
+fast_image_resize = "5"
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"

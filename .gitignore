@@ -1,0 +1,23 @@
+# dependencies
+node_modules
+# build output
+dist
+dist-ssr
+coverage
+# rust / tauri
+src-tauri/target
+src-tauri/gen/schemas
+# logs
+*.log
+npm-debug.log*
+# editor / os
+.DS_Store
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+.vscode/*
+!.vscode/extensions.json
+# prettier / misc caches
+.eslintcache
