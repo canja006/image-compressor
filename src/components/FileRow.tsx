@@ -18,6 +18,7 @@ export function FileRow({ input, result, phase, index, onRemove }: FileRowProps)
   const view = result ? describeOutcome(result) : null
   const finalBytes = result ? finalBytesOf(result) : null
   const pending = phase === 'running' && !result
+  const capMode = useStore((s) => s.settings.capMode)
 
   return (
     <li
@@ -53,7 +54,7 @@ export function FileRow({ input, result, phase, index, onRemove }: FileRowProps)
           </span>
         ) : (
           <>
-            <CapOverrideControl path={input.path} />
+            {capMode === 'perFile' && <CapOverrideControl path={input.path} />}
             <Button
               variant="ghost"
               onClick={onRemove}

@@ -1,11 +1,11 @@
-import { useStore } from '../store/useStore'
+import { useStore, type CapMode } from '../store/useStore'
 import type { SizeUnit } from '../lib/format'
 import type { OutputFormat } from '../lib/types'
 import { Field, NumberField, Segmented, Toggle } from './ui'
 
 const FORMAT_HINT: Record<OutputFormat, string> = {
   jpeg: 'Re-encodes to JPEG. Best compatibility and smallest files.',
-  png: 'Lossless PNG. Keeps transparency; size is reached by downscaling only.',
+  png: 'Lossless PNG (optimized with oxipng). Keeps transparency; the cap is reached by downscaling.',
   avif: 'Best compression at a given quality, but noticeably slower to encode.',
   keep: 'PNG for images with transparency, JPEG otherwise.',
 }
@@ -20,7 +20,25 @@ export function CapControls() {
 
   return (
     <div className="space-y-5">
-      <Field label="Target file size">
+      <Field
+        label={settings.capMode === 'totalBudget' ? 'Total budget' : 'Target file size'}
+        hint={
+          settings.capMode === 'totalBudget'
+            ? 'Split across all images by size so the whole set fits.'
+            : undefined
+        }
+        action={
+          <Segmented<CapMode>
+            ariaLabel="Cap mode"
+            value={settings.capMode}
+            onChange={(capMode) => update({ capMode })}
+            options={[
+              { value: 'perFile', label: 'Per file' },
+              { value: 'totalBudget', label: 'Total' },
+            ]}
+          />
+        }
+      >
         <div className="flex items-center gap-2">
           <NumberField
             className="flex-1"

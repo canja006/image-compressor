@@ -30,6 +30,17 @@ describe('AVIF output format', () => {
   })
 })
 
+describe('total-budget mode', () => {
+  it('switches the cap mode and relabels the field', async () => {
+    const user = userEvent.setup()
+    render(<CapControls />)
+    expect(screen.getByText('Target file size')).toBeInTheDocument()
+    await user.click(screen.getByRole('radio', { name: 'Total' }))
+    expect(useStore.getState().settings.capMode).toBe('totalBudget')
+    expect(screen.getByText('Total budget')).toBeInTheDocument()
+  })
+})
+
 describe('JPEG background control', () => {
   it('appears for JPEG and updates the background setting', async () => {
     const user = userEvent.setup()

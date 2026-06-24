@@ -1,6 +1,6 @@
 [package]
 name = "image-compressor"
-version = "0.2.0"
+version = "0.3.0"
 description = "Target-size image compressor — compress and resize images to hit a file-size cap."
 authors = ["Antti Jakunaho"]
 edition = "2021"

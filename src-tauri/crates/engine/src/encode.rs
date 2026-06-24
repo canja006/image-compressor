@@ -118,7 +118,13 @@ fn encode_png(img: &DynamicImage) -> Result<Vec<u8>, EngineError> {
         )
         .map_err(|e| EngineError::Encode(e.to_string()))?;
     }
-    Ok(buf)
+    // Lossless post-optimization with oxipng — shrinks the PNG further with no pixel change, so a
+    // PNG cap is reachable at a higher resolution before any downscaling. Best-effort: if it fails,
+    // the already-valid PNG is returned unchanged.
+    match oxipng::optimize_from_memory(&buf, &oxipng::Options::from_preset(2)) {
+        Ok(optimized) => Ok(optimized),
+        Err(_) => Ok(buf),
+    }
 }
 
 /// Drop alpha by compositing over a solid `background`. JPEG has no alpha channel, so a

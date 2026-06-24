@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useStore, buildOptions } from '../store/useStore'
 import { isTauri, previewSample } from '../lib/tauri'
-import { formatBytes, percentSaved } from '../lib/format'
+import { formatBytes, parseSizeToBytes, percentSaved } from '../lib/format'
+import { splitBudget } from '../lib/budget'
 import { basename } from '../lib/outcome'
 import { cx } from '../lib/cx'
 import type { Preview } from '../lib/types'
@@ -27,7 +28,15 @@ export function SamplePreview() {
     let cancelled = false
     setLoading(true)
     const timer = setTimeout(() => {
-      previewSample(samplePath, buildOptions(settings))
+      const options = buildOptions(settings)
+      // In total-budget mode, preview this image against its split share, not the whole budget.
+      if (settings.capMode === 'totalBudget') {
+        const share = splitBudget(inputs, parseSizeToBytes(settings.capValue, settings.capUnit))[
+          samplePath
+        ]
+        if (share != null) options.capBytes = share
+      }
+      previewSample(samplePath, options)
         .then((result) => {
           if (!cancelled) {
             setPreview(result)
@@ -45,7 +54,7 @@ export function SamplePreview() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [samplePath, settings, phase])
+  }, [samplePath, settings, phase, inputs])
 
   if (!sample || !isTauri()) return null
 

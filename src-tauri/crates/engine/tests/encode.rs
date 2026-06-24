@@ -2,7 +2,8 @@
 
 use engine::decode::decode;
 use engine::encode::{encode, EncodeFormat};
-use image::{DynamicImage, Rgb, RgbImage, Rgba, RgbaImage};
+use image::{DynamicImage, ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
+use std::io::Cursor;
 
 fn jpeg() -> EncodeFormat {
     EncodeFormat::Jpeg {
@@ -63,4 +64,26 @@ fn alpha_is_flattened_onto_background_for_jpeg() {
             "got {got}, want {want}"
         );
     }
+}
+
+#[test]
+fn png_output_is_optimized_and_still_lossless() {
+    let img = detailed(256, 256);
+    // Baseline: the image crate's default PNG encoder, with no oxipng pass.
+    let mut baseline = Vec::new();
+    img.write_to(&mut Cursor::new(&mut baseline), ImageFormat::Png)
+        .unwrap();
+
+    let optimized = encode(&img, EncodeFormat::Png, None).unwrap();
+    assert!(
+        optimized.len() <= baseline.len(),
+        "oxipng should not enlarge the PNG: {} vs baseline {}",
+        optimized.len(),
+        baseline.len()
+    );
+    assert_eq!(
+        decode(&optimized).unwrap().to_rgb8(),
+        img.to_rgb8(),
+        "still lossless"
+    );
 }

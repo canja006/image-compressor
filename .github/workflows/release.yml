@@ -1,8 +1,11 @@
 name: Release
 
-# Build signed-ready installers for both desktop platforms from a single version tag.
-# Push a tag like `v0.1.0` (or run manually) and this builds Windows + macOS bundles and
-# attaches them to a draft GitHub Release.
+# Build installers for both desktop platforms from a single version tag. A dedicated job creates
+# the draft release first so the matrix build jobs reliably upload to the SAME release (avoiding the
+# race where two concurrent jobs each try to create it and one platform's assets get lost).
+#
+# Push a tag like `v0.3.0` (or run manually) to produce Windows (.msi/.exe) and macOS universal
+# (.dmg/.app) artifacts attached to a draft GitHub Release.
 
 on:
   push:
@@ -14,7 +17,31 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the draft release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '')
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Image Compressor ${tag}`,
+              body: 'Download the installer for your platform from the assets below.',
+              draft: true,
+              prerelease: false,
+            })
+            return data.id
+
   build:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +74,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build the app and publish the release
+      - name: Build the app and upload to the release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -56,9 +83,5 @@ jobs:
           #            APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
           #   Windows: configure Authenticode via tauri.conf.json bundle.windows
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Image Compressor ${{ github.ref_name }}'
-          releaseBody: 'Download the installer for your platform from the assets below.'
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}

@@ -1,6 +1,6 @@
 [package]
 name = "engine"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Pure-Rust target-size image compression engine (no Tauri/OS-specific code)."
 license = "MIT"
@@ -24,6 +24,8 @@ thiserror = "2"
 # OS (the spec's clean-build goal) — the trade-off is a slower encode without SIMD assembly.
 ravif = { version = "0.11", default-features = false, features = ["threading"] }
 rgb = "0.8"
+# Pure-Rust lossless PNG optimizer (no C deps with these features).
+oxipng = { version = "9", default-features = false, features = ["parallel", "zopfli"] }
 
 [dev-dependencies]
 # Integration tests (tests/) are a separate crate, so they need `image` and `serde_json`

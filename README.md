@@ -10,7 +10,8 @@ A standalone Windows + macOS desktop app that compresses and resizes images to h
 
 - Compress a single image or a whole batch (drag-and-drop files/folders, or the native picker; folders are scanned recursively)
 - **Target file size** with a KB / MB toggle, plus an optional max-dimension (longest edge) cap
-- Input: JPEG, PNG, WebP, TIFF. Output: JPEG (default), PNG (lossless), or AVIF (best ratio, slower), plus "keep original"
+- **Per-file cap overrides**, or a **total-folder budget** mode that fits a whole set under one combined cap (split across images by size)
+- Input: JPEG, PNG, WebP, TIFF. Output: JPEG (default), PNG (lossless, oxipng-optimized), or AVIF (best ratio, slower), plus "keep original"
 - **Live before/after preview** with a size readout for the first image, recomputed as you change settings
 - Transparency handling: PNG/AVIF keep alpha; JPEG flattens onto a configurable background color
 - Parallel batch processing (Rust `rayon`, capped to the core count) with overall + per-file progress

@@ -12,11 +12,15 @@ import { parseSizeToBytes, type SizeUnit } from '../lib/format'
 
 export type Phase = 'idle' | 'running' | 'done'
 
+/** Whether the cap is a per-image target or a combined budget split across all images. */
+export type CapMode = 'perFile' | 'totalBudget'
+
 /** UI-facing settings. `capValue`/`capUnit` are split for the KB/MB toggle; everything else maps
  *  to the engine `Options` via {@link buildOptions}. */
 export interface Settings {
   capValue: number
   capUnit: SizeUnit
+  capMode: CapMode
   maxDimensionEnabled: boolean
   maxDimension: number
   outputFormat: OutputFormat
@@ -33,6 +37,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   capValue: 500,
   capUnit: 'KB',
+  capMode: 'perFile',
   maxDimensionEnabled: false,
   maxDimension: 2000,
   outputFormat: 'jpeg',
