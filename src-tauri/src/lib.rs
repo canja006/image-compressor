@@ -21,6 +21,7 @@ pub fn run() {
             commands::scan_inputs,
             commands::compress_batch,
             commands::cancel_batch,
+            commands::preview_sample,
         ])
         .run(tauri::generate_context!());
 

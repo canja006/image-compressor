@@ -3,9 +3,12 @@ import { useStore } from '../store/useStore'
 import { pickOutputDir } from '../lib/tauri'
 import type { CollisionPolicy } from '../lib/types'
 import { basename } from '../lib/outcome'
+import { hexToRgb, rgbToHex } from '../lib/color'
 import { Button, Field, NumberField, Segmented, Toggle } from './ui'
 import { cx } from '../lib/cx'
 import { IconChevron } from '../lib/icons'
+
+const BACKGROUND_SWATCHES = ['#ffffff', '#000000', '#f7f6f3'] as const
 
 export function Settings() {
   const [open, setOpen] = useState(false)
@@ -98,6 +101,36 @@ export function Settings() {
               onChange={(skipIfUnderCap) => update({ skipIfUnderCap })}
             />
           </div>
+
+          {settings.outputFormat === 'jpeg' && (
+            <Field
+              label="JPEG background"
+              hint="Transparent areas are filled with this color — JPEG has no transparency. PNG and AVIF keep it."
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  aria-label="JPEG background color"
+                  value={rgbToHex(settings.background)}
+                  disabled={running}
+                  onChange={(e) => update({ background: hexToRgb(e.target.value) })}
+                  className="h-9 w-12 cursor-pointer rounded-md border border-line bg-surface p-1"
+                />
+                <div className="flex items-center gap-1.5">
+                  {BACKGROUND_SWATCHES.map((hex) => (
+                    <button
+                      key={hex}
+                      type="button"
+                      aria-label={`Use background ${hex}`}
+                      onClick={() => update({ background: hexToRgb(hex) })}
+                      className="h-7 w-7 rounded-md border border-line transition-transform duration-150 hover:scale-105"
+                      style={{ backgroundColor: hex }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </Field>
+          )}
 
           <Field label="JPEG quality range" hint="The size search stays within these bounds (1–100).">
             <div className="flex items-center gap-2">

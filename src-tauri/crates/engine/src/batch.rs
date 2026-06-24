@@ -201,10 +201,15 @@ fn process_one(path: &Path, options: &Options) -> FileResult {
     result
 }
 
-fn resolve_format(of: OutputFormat, img: &DynamicImage, background: [u8; 3]) -> EncodeFormat {
+pub(crate) fn resolve_format(
+    of: OutputFormat,
+    img: &DynamicImage,
+    background: [u8; 3],
+) -> EncodeFormat {
     match of {
         OutputFormat::Jpeg => EncodeFormat::Jpeg { background },
         OutputFormat::Png => EncodeFormat::Png,
+        OutputFormat::Avif => EncodeFormat::Avif,
         OutputFormat::Keep => {
             if img.color().has_alpha() {
                 EncodeFormat::Png

@@ -1,7 +1,7 @@
 // TypeScript mirror of the engine's serde types (src-tauri/crates/engine/src/model.rs).
 // Field names are camelCase to match `#[serde(rename_all = "camelCase")]`.
 
-export type OutputFormat = 'keep' | 'jpeg' | 'png'
+export type OutputFormat = 'keep' | 'jpeg' | 'png' | 'avif'
 
 export type CollisionPolicy = 'suffix' | 'overwrite' | 'skip'
 
@@ -56,4 +56,22 @@ export interface Progress {
 export interface InputFile {
   path: string
   bytes: number
+}
+
+/** Result of an in-memory single-image preview (the `preview_sample` command). */
+export interface Preview {
+  originalBytes: number
+  sourceWidth: number
+  sourceHeight: number
+  hasAlpha: boolean
+  kind: 'compressed' | 'unreachable' | 'failed'
+  finalBytes: number | null
+  quality: number | null
+  width: number | null
+  height: number | null
+  downscaled: boolean
+  mime: string | null
+  error: string | null
+  /** Data URL of the compressed result, ready for an `<img src>` (null unless compressed). */
+  dataUrl: string | null
 }

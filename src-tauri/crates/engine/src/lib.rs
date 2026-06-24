@@ -11,6 +11,7 @@ pub mod encode;
 pub mod error;
 pub mod model;
 pub mod naming;
+pub mod preview;
 pub mod resize;
 pub mod target;
 
@@ -20,4 +21,5 @@ pub use error::EngineError;
 pub use model::{
     BatchSummary, CollisionPolicy, FileResult, InputFile, Options, Outcome, OutputFormat, Progress,
 };
+pub use preview::{preview, Preview};
 pub use target::{compress_to_target, TargetResult};

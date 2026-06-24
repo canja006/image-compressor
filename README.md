@@ -8,12 +8,14 @@ A standalone Windows + macOS desktop app that compresses and resizes images to h
 
 - Compress a single image or a whole batch (drag-and-drop files/folders, or the native picker; folders are scanned recursively)
 - **Target file size** with a KB / MB toggle, plus an optional max-dimension (longest edge) cap
-- Input: JPEG, PNG, WebP, TIFF. Output: JPEG (default, full quality search) or PNG (lossless), plus "keep original"
+- Input: JPEG, PNG, WebP, TIFF. Output: JPEG (default), PNG (lossless), or AVIF (best ratio, slower), plus "keep original"
+- **Live before/after preview** with a size readout for the first image, recomputed as you change settings
+- Transparency handling: PNG/AVIF keep alpha; JPEG flattens onto a configurable background color
 - Parallel batch processing (Rust `rayon`, capped to the core count) with overall + per-file progress
 - **Cancel** mid-run with accurate partial results
 - **Per-file isolation:** a corrupt or unreachable file is recorded with a reason and the batch continues — it never aborts the job or panics
 - Result summary per file: original → final size, % saved, final quality/dimensions, and any failures
-- Light / dark themes, keyboard-operable, AA contrast
+- Built-in help panel, light / dark themes, keyboard-operable, AA contrast
 
 ## How the target-size algorithm works
 
@@ -26,7 +28,7 @@ When a cap is reachable the output is **always ≤ the cap**, and the search ret
 - **Tauri 2** — Rust core; WebView2 on Windows, WKWebView on macOS
 - **React 18 + TypeScript (strict) + Vite** frontend, **Tailwind CSS**, **Zustand** state
 - Tauri plugins: `dialog`, `fs`, `store`
-- Engine crates: `image` (decode/encode), `fast_image_resize` (Lanczos3 resize), `rayon`, `thiserror`, `serde`
+- Engine crates: `image` (decode/encode), `ravif` (AVIF), `fast_image_resize` (Lanczos3 resize), `rayon`, `thiserror`, `serde`
 
 The compression engine is a **separate workspace crate** (`src-tauri/crates/engine`) with **no Tauri dependency**, so it is platform-neutral and unit-testable on its own.
 
@@ -83,7 +85,7 @@ Push a tag like `v0.1.0` to trigger it. Optional code signing — Windows Authen
 
 ## Encoder backend (a deliberate decision)
 
-The app defaults to **pure-Rust encoders** (the `image` crate: JPEG quality search + PNG lossless) so it builds cleanly on both Windows and macOS with no C toolchain. Lossy **WebP** and **AVIF** give smaller files but need native libraries (libwebp) or `ravif`, which add build friction on both platforms — so they are deferred to an optional future backend rather than forced. This follows the spec's library-risk guidance.
+The app uses **pure-Rust encoders** so it builds cleanly on both Windows and macOS with no C toolchain: the `image` crate for JPEG (quality search) and PNG (lossless), and `ravif` for AVIF (best ratio, slower to encode). Lossy **WebP** is the one format still deferred — it needs a native library (libwebp) that adds build friction — rather than forced. This follows the spec's library-risk guidance.
 
 ## License
 

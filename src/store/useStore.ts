@@ -26,6 +26,8 @@ export interface Settings {
   skipIfUnderCap: boolean
   jpegQualityMin: number
   jpegQualityMax: number
+  /** Fill color for transparent areas when flattening to JPEG. */
+  background: [number, number, number]
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   skipIfUnderCap: true,
   jpegQualityMin: 10,
   jpegQualityMax: 95,
+  background: [255, 255, 255],
 }
 
 const SETTINGS_KEY = 'image-compressor.settings'
@@ -79,7 +82,7 @@ export function buildOptions(s: Settings): Options {
     jpegQualityMin: s.jpegQualityMin,
     jpegQualityMax: s.jpegQualityMax,
     minLongEdge: 16,
-    background: [255, 255, 255],
+    background: s.background,
   }
 }
 

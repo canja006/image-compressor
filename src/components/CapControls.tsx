@@ -6,13 +6,17 @@ import { Field, NumberField, Segmented, Toggle } from './ui'
 const FORMAT_HINT: Record<OutputFormat, string> = {
   jpeg: 'Re-encodes to JPEG. Best compatibility and smallest files.',
   png: 'Lossless PNG. Keeps transparency; size is reached by downscaling only.',
+  avif: 'Best compression at a given quality, but noticeably slower to encode.',
   keep: 'PNG for images with transparency, JPEG otherwise.',
 }
+
+const AVIF_BATCH_WARN_THRESHOLD = 24
 
 export function CapControls() {
   const settings = useStore((s) => s.settings)
   const update = useStore((s) => s.updateSettings)
   const running = useStore((s) => s.phase === 'running')
+  const inputCount = useStore((s) => s.inputs.length)
 
   return (
     <div className="space-y-5">
@@ -48,9 +52,15 @@ export function CapControls() {
           options={[
             { value: 'jpeg', label: 'JPEG' },
             { value: 'png', label: 'PNG' },
-            { value: 'keep', label: 'Keep original' },
+            { value: 'avif', label: 'AVIF' },
+            { value: 'keep', label: 'Keep' },
           ]}
         />
+        {settings.outputFormat === 'avif' && inputCount > AVIF_BATCH_WARN_THRESHOLD && (
+          <p className="mt-2 rounded-md bg-warn-bg px-2.5 py-1.5 text-[11px] text-warn">
+            AVIF encodes slowly — {inputCount} images may take a while.
+          </p>
+        )}
       </Field>
 
       <Field

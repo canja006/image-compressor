@@ -2,8 +2,9 @@
 //! `Options`, `InputFile`, `BatchSummary`, and `Progress` are engine serde types reused verbatim.
 
 use crate::CancelState;
-use engine::{BatchSummary, InputFile, Options, Progress};
-use std::path::PathBuf;
+use base64::Engine as _;
+use engine::{BatchSummary, InputFile, Options, Preview, Progress};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, State};
 
@@ -46,4 +47,39 @@ pub async fn compress_batch(
     })
     .await
     .map_err(|e| format!("batch task failed to join: {e}"))
+}
+
+/// The engine `Preview` plus a ready-to-display data URL of the compressed result.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewDto {
+    #[serde(flatten)]
+    meta: Preview,
+    data_url: Option<String>,
+}
+
+/// Compress a single image in memory (writes nothing) and return its metrics plus a data URL,
+/// for the live before/after preview. Runs on a blocking worker.
+#[tauri::command]
+pub async fn preview_sample(path: String, options: Options) -> Result<PreviewDto, String> {
+    let preview =
+        tauri::async_runtime::spawn_blocking(move || engine::preview(Path::new(&path), &options))
+            .await
+            .map_err(|e| format!("preview task failed to join: {e}"))?;
+
+    let data_url = if preview.bytes.is_empty() {
+        None
+    } else {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&preview.bytes);
+        let mime = preview
+            .mime
+            .clone()
+            .unwrap_or_else(|| "image/jpeg".to_string());
+        Some(format!("data:{mime};base64,{encoded}"))
+    };
+
+    Ok(PreviewDto {
+        meta: preview,
+        data_url,
+    })
 }

@@ -3,12 +3,16 @@ use crate::model::Options;
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{DynamicImage, ExtendedColorType, ImageEncoder, RgbImage};
+use ravif::{Encoder, Img};
+use rgb::FromSlice;
 
-/// A concrete encoder target. JPEG carries the background used to flatten alpha; PNG is lossless.
+/// A concrete encoder target. JPEG carries the background used to flatten alpha; PNG and AVIF are
+/// alpha-preserving (PNG lossless, AVIF lossy with a quality knob).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeFormat {
     Jpeg { background: [u8; 3] },
     Png,
+    Avif,
 }
 
 impl EncodeFormat {
@@ -17,14 +21,25 @@ impl EncodeFormat {
         match self {
             EncodeFormat::Jpeg { .. } => "jpg",
             EncodeFormat::Png => "png",
+            EncodeFormat::Avif => "avif",
+        }
+    }
+
+    /// MIME type, used when building a preview data URL.
+    pub fn mime(&self) -> &'static str {
+        match self {
+            EncodeFormat::Jpeg { .. } => "image/jpeg",
+            EncodeFormat::Png => "image/png",
+            EncodeFormat::Avif => "image/avif",
         }
     }
 
     /// The `(min, max)` quality range for the size search, or `None` for formats without a
     /// lossy quality knob. `max` is clamped to be `>= min` so the search range is always valid.
+    /// JPEG and AVIF share the user's configured quality bounds.
     pub fn quality_range(&self, opts: &Options) -> Option<(u8, u8)> {
         match self {
-            EncodeFormat::Jpeg { .. } => {
+            EncodeFormat::Jpeg { .. } | EncodeFormat::Avif => {
                 let lo = opts.jpeg_quality_min.clamp(1, 100);
                 let hi = opts.jpeg_quality_max.clamp(lo, 100);
                 Some((lo, hi))
@@ -43,7 +58,22 @@ pub fn encode(
     match fmt {
         EncodeFormat::Jpeg { background } => encode_jpeg(img, quality.unwrap_or(75), background),
         EncodeFormat::Png => encode_png(img),
+        EncodeFormat::Avif => encode_avif(img, quality.unwrap_or(60)),
     }
+}
+
+/// Encode to AVIF with the pure-Rust `ravif`/rav1e encoder. Alpha is preserved. Speed 8 keeps the
+/// per-step encode fast enough for the size search (the spec accepts AVIF being slower overall).
+fn encode_avif(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, EngineError> {
+    let rgba = img.to_rgba8();
+    let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+    let raw: &[u8] = rgba.as_raw();
+    let encoded = Encoder::new()
+        .with_quality(f32::from(quality.clamp(1, 100)))
+        .with_speed(8)
+        .encode_rgba(Img::new(raw.as_rgba(), w, h))
+        .map_err(|e| EngineError::Encode(e.to_string()))?;
+    Ok(encoded.avif_file)
 }
 
 fn encode_jpeg(

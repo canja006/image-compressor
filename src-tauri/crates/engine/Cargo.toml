@@ -20,6 +20,9 @@ fast_image_resize = "5"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+# Pure-Rust AVIF encoder (rav1e) — best compression ratio, slower encode. No C toolchain needed.
+ravif = "0.11"
+rgb = "0.8"
 
 [dev-dependencies]
 # Integration tests (tests/) are a separate crate, so they need `image` and `serde_json`

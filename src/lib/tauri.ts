@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { BatchSummary, InputFile, Options, Progress } from './types'
+import type { BatchSummary, InputFile, Options, Preview, Progress } from './types'
 
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff']
 
@@ -30,6 +30,12 @@ export async function compressBatch(files: string[], options: Options): Promise<
 export async function cancelBatch(): Promise<void> {
   if (!isTauri()) return
   await invoke('cancel_batch')
+}
+
+/** Compress one image in memory (writes nothing) for the live before/after preview. */
+export async function previewSample(path: string, options: Options): Promise<Preview | null> {
+  if (!isTauri()) return null
+  return invoke<Preview>('preview_sample', { path, options })
 }
 
 /** Subscribe to per-file progress events. Returns an unlisten function. */

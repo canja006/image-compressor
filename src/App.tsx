@@ -5,6 +5,8 @@ import { CapControls } from './components/CapControls'
 import { Settings } from './components/Settings'
 import { RunBar } from './components/RunBar'
 import { SummaryBanner } from './components/SummaryBanner'
+import { SamplePreview } from './components/SamplePreview'
+import { HelpDialog } from './components/HelpDialog'
 import { Panel } from './components/ui'
 import { IconMoon, IconSun } from './lib/icons'
 import { applyTheme, getInitialTheme, type Theme } from './lib/theme'
@@ -59,6 +61,7 @@ function AmbientBackground() {
 
 export default function App() {
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme())
+  const [helpOpen, setHelpOpen] = useState(false)
 
   function toggleTheme() {
     const next: Theme = theme === 'dark' ? 'light' : 'dark'
@@ -82,12 +85,23 @@ export default function App() {
             </p>
           </div>
         </div>
-        <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            aria-label="How to use this app"
+            className="grid h-8 w-8 place-items-center rounded-md border border-line bg-surface text-sm font-semibold text-muted transition-[color,border-color,transform] duration-150 hover:border-line-strong hover:text-ink active:scale-95"
+          >
+            ?
+          </button>
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        </div>
       </header>
 
       <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 overflow-y-auto px-5 py-5 md:grid md:grid-cols-[minmax(0,1fr)_344px] md:overflow-hidden">
         <div className="flex min-h-[320px] flex-col gap-4 md:min-h-0 md:overflow-hidden">
           <SummaryBanner />
+          <SamplePreview />
           <div className="min-h-[320px] flex-1 md:min-h-0">
             <Intake />
           </div>
@@ -104,6 +118,8 @@ export default function App() {
           </Panel>
         </aside>
       </main>
+
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   )
 }

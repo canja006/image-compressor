@@ -11,6 +11,7 @@ pub enum OutputFormat {
     Keep,
     Jpeg,
     Png,
+    Avif,
 }
 
 /// What to do when the computed output path already exists on disk.
