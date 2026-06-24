@@ -4,6 +4,8 @@ A standalone Windows + macOS desktop app that compresses and resizes images to h
 
 > "Get this under 500 KB." "Get all of these under 2 MB."
 
+![Image Compressor](docs/screenshot.png)
+
 ## Features
 
 - Compress a single image or a whole batch (drag-and-drop files/folders, or the native picker; folders are scanned recursively)
