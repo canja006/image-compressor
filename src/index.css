@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --c-canvas: 251 251 250;
+    --c-surface: 255 255 255;
+    --c-sunken: 247 246 243;
+    --c-ink: 28 28 26;
+    --c-muted: 120 119 116;
+    --c-faint: 161 160 155;
+    --c-line: 232 231 227;
+    --c-line-strong: 219 218 213;
+    --c-accent: 26 26 24;
+    --c-accent-fg: 251 251 250;
+    --c-good: 52 101 56;
+    --c-good-bg: 237 243 236;
+    --c-warn: 149 100 0;
+    --c-warn-bg: 251 243 219;
+    --c-bad: 159 47 45;
+    --c-bad-bg: 253 235 236;
+    --c-info: 31 108 159;
+    --c-info-bg: 225 243 254;
+    color-scheme: light;
+  }
+
+  [data-theme='dark'] {
+    --c-canvas: 23 23 21;
+    --c-surface: 31 31 28;
+    --c-sunken: 38 38 34;
+    --c-ink: 232 231 226;
+    --c-muted: 150 149 143;
+    --c-faint: 110 109 104;
+    --c-line: 44 44 40;
+    --c-line-strong: 58 57 52;
+    --c-accent: 232 231 226;
+    --c-accent-fg: 23 23 21;
+    --c-good: 134 196 140;
+    --c-good-bg: 28 44 31;
+    --c-warn: 222 184 92;
+    --c-warn-bg: 49 41 19;
+    --c-bad: 235 138 136;
+    --c-bad-bg: 54 29 30;
+    --c-info: 130 196 240;
+    --c-info-bg: 20 42 56;
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden; /* the app owns its own scroll regions */
+  }
+
+  /* Quiet, monochrome scrollbars that match the surface. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--c-line-strong)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--c-line-strong));
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--c-muted));
+  }
+
+  ::selection {
+    background: rgb(var(--c-accent) / 0.16);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--c-ink) / 0.45);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
