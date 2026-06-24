@@ -89,3 +89,24 @@ fn collision_policies_resolve_correctly() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn never_overwrites_the_source_even_under_overwrite_policy() {
+    let dir = unique_dir("source");
+    let input = dir.join("a.jpg");
+    std::fs::write(&input, b"original").unwrap();
+
+    // Empty suffix + same folder + same extension would otherwise resolve to the source itself.
+    let opts = Options {
+        output_dir: Some(dir.clone()),
+        suffix: String::new(),
+        collision: CollisionPolicy::Overwrite,
+        ..Options::default()
+    };
+    match resolve_output_path(&input, &opts, "jpg") {
+        Resolved::Path(p) => assert_ne!(p, input, "must never overwrite the source file"),
+        Resolved::SkipCollision => panic!("should produce a safe numbered output, not skip"),
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}

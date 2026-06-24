@@ -164,8 +164,31 @@ pub fn preview_from_source(
             p.height = Some(source.base_height);
             p.downscaled = t.downscaled;
             p.approx = approx;
-            p.mime = Some(fmt.mime().to_string());
-            p.bytes = t.bytes;
+            // AVIF may not render in older system WebViews, so show a web-safe JPEG stand-in of the
+            // image for display. The size/quality readout above still reflects the real AVIF result.
+            match fmt {
+                EncodeFormat::Avif => {
+                    let bg = options.background;
+                    match encode(
+                        &source.work,
+                        EncodeFormat::Jpeg { background: bg },
+                        Some(85),
+                    ) {
+                        Ok(jpeg) => {
+                            p.mime = Some("image/jpeg".to_string());
+                            p.bytes = jpeg;
+                        }
+                        Err(_) => {
+                            p.mime = Some(fmt.mime().to_string());
+                            p.bytes = t.bytes;
+                        }
+                    }
+                }
+                _ => {
+                    p.mime = Some(fmt.mime().to_string());
+                    p.bytes = t.bytes;
+                }
+            }
         }
         Ok(None) => {}
         Err(e) => return Preview::failed(original_bytes, e.to_string()),

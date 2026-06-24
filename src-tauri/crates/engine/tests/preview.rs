@@ -112,3 +112,24 @@ fn thumbnail_is_small_and_decodable() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn avif_preview_displays_as_web_safe_jpeg() {
+    let dir = unique_dir("avifprev");
+    let src = dir.join("p.jpg");
+    write_jpeg(&src, 400, 300);
+    let opts = Options {
+        output_format: OutputFormat::Avif,
+        cap_bytes: 200 * 1024,
+        skip_if_under_cap: false,
+        ..Options::default()
+    };
+
+    let p = preview(&src, &opts);
+    assert_eq!(p.kind, "compressed");
+    // The displayed image is JPEG (renders everywhere), even though the size is the AVIF result.
+    assert_eq!(p.mime.as_deref(), Some("image/jpeg"));
+    assert!(!p.bytes.is_empty());
+
+    std::fs::remove_dir_all(&dir).ok();
+}

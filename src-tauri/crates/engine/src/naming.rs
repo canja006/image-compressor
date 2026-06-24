@@ -8,8 +8,9 @@ pub enum Resolved {
 }
 
 /// Compute the output path for `input`, honoring the output directory, suffix, target extension,
-/// and collision policy. Never returns a path that already exists unless the policy is
-/// `Overwrite`.
+/// and collision policy. Never returns a path that already exists unless the policy is `Overwrite`,
+/// and never returns the `input` path itself — writing there would destroy the original being
+/// compressed, so the source is always protected by falling through to a numbered name.
 pub fn resolve_output_path(input: &Path, opts: &Options, ext: &str) -> Resolved {
     let parent = opts
         .output_dir
@@ -24,21 +25,27 @@ pub fn resolve_output_path(input: &Path, opts: &Options, ext: &str) -> Resolved 
     let base_name = format!("{stem}{}", opts.suffix);
     let candidate = parent.join(format!("{base_name}.{ext}"));
 
-    if !candidate.exists() {
-        return Resolved::Path(candidate);
-    }
+    // Guard the source: e.g. an empty suffix + same folder + same extension would resolve to the
+    // input itself. Protect it regardless of policy by numbering instead of overwriting.
+    let is_source = candidate == input;
 
-    match opts.collision {
-        CollisionPolicy::Overwrite => Resolved::Path(candidate),
-        CollisionPolicy::Skip => Resolved::SkipCollision,
-        CollisionPolicy::Suffix => {
-            for n in 1..10_000 {
-                let p = parent.join(format!("{base_name}-{n}.{ext}"));
-                if !p.exists() {
-                    return Resolved::Path(p);
-                }
-            }
-            Resolved::SkipCollision
+    if !is_source {
+        if !candidate.exists() {
+            return Resolved::Path(candidate);
+        }
+        match opts.collision {
+            CollisionPolicy::Overwrite => return Resolved::Path(candidate),
+            CollisionPolicy::Skip => return Resolved::SkipCollision,
+            CollisionPolicy::Suffix => {}
         }
     }
+
+    // Suffix policy, or protecting the source: first free numbered name that isn't the source.
+    for n in 1..10_000 {
+        let p = parent.join(format!("{base_name}-{n}.{ext}"));
+        if p != input && !p.exists() {
+            return Resolved::Path(p);
+        }
+    }
+    Resolved::SkipCollision
 }
