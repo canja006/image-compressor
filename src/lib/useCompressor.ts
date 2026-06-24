@@ -24,8 +24,11 @@ export function useCompressor() {
     }))
     state.beginRun()
 
-    const unlisten = await onProgress((p) => useStore.getState().recordProgress(p))
+    // Set up the listener inside the try so that if even subscribing fails, the catch resets the
+    // phase (otherwise the UI would be stuck on "running" forever).
+    let unlisten = () => {}
     try {
+      unlisten = await onProgress((p) => useStore.getState().recordProgress(p))
       const summary = await compressBatch(items, options)
       useStore.getState().endRun(summary)
     } catch (error) {

@@ -194,7 +194,8 @@ export const useStore = create<StoreState>((set, get) => ({
   recordProgress: (p) =>
     set((state) => ({
       results: { ...state.results, [p.result.input]: p.result },
-      completed: p.completed,
+      // Parallel workers can emit out of order; never let the counter go backwards.
+      completed: Math.max(state.completed, p.completed),
       total: p.total,
     })),
 

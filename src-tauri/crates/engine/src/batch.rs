@@ -30,18 +30,30 @@ pub fn is_supported(path: &Path) -> bool {
 pub fn scan_inputs(paths: &[PathBuf]) -> Vec<InputFile> {
     let mut out: Vec<InputFile> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     for p in paths {
-        collect(p, &mut out, &mut seen);
+        collect(p, &mut out, &mut seen, &mut visited_dirs);
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
     out
 }
 
-fn collect(path: &Path, out: &mut Vec<InputFile>, seen: &mut HashSet<PathBuf>) {
+fn collect(
+    path: &Path,
+    out: &mut Vec<InputFile>,
+    seen: &mut HashSet<PathBuf>,
+    visited_dirs: &mut HashSet<PathBuf>,
+) {
     if path.is_dir() {
+        // Guard against symlink loops (a folder linking back to an ancestor would otherwise recurse
+        // forever): only descend into each real directory once, keyed by its canonical path.
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if !visited_dirs.insert(canonical) {
+            return;
+        }
         if let Ok(entries) = std::fs::read_dir(path) {
             for entry in entries.flatten() {
-                collect(&entry.path(), out, seen);
+                collect(&entry.path(), out, seen, visited_dirs);
             }
         }
     } else if path.is_file() && is_supported(path) && seen.insert(path.to_path_buf()) {
@@ -364,6 +376,26 @@ mod tests {
         assert!(
             matches!(summary.results[0].outcome, Outcome::Unreachable { .. }),
             "the per-item override should force unreachable, not the lenient batch cap"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn scan_inputs_terminates_on_symlink_cycles() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("ic_symlink_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = write_test_jpeg(&dir, "a.jpg", 32, 32);
+        // A directory symlink pointing back to its own parent forms a cycle.
+        let _ = symlink(&dir, dir.join("loop"));
+
+        // Must terminate (not recurse forever) and still find the real image.
+        let found = scan_inputs(std::slice::from_ref(&dir));
+        assert!(
+            found.iter().any(|f| f.path == img),
+            "the real image should be found"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
