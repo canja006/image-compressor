@@ -89,6 +89,8 @@ export function buildOptions(s: Settings): Options {
 interface StoreState {
   inputs: InputFile[]
   results: Record<string, FileResult>
+  /** Per-file size-cap overrides in bytes, keyed by path. Absent = use the batch cap. */
+  capOverrides: Record<string, number>
   phase: Phase
   completed: number
   total: number
@@ -98,6 +100,7 @@ interface StoreState {
   addInputs: (files: InputFile[]) => void
   removeInput: (path: string) => void
   clearInputs: () => void
+  setCapOverride: (path: string, bytes: number | null) => void
   updateSettings: (patch: Partial<Settings>) => void
   beginRun: () => void
   recordProgress: (p: Progress) => void
@@ -109,6 +112,7 @@ interface StoreState {
 export const useStore = create<StoreState>((set, get) => ({
   inputs: [],
   results: {},
+  capOverrides: {},
   phase: 'idle',
   completed: 0,
   total: 0,
@@ -130,11 +134,29 @@ export const useStore = create<StoreState>((set, get) => ({
       if (state.phase === 'running') return state
       const results = { ...state.results }
       delete results[path]
-      return { inputs: state.inputs.filter((f) => f.path !== path), results }
+      const capOverrides = { ...state.capOverrides }
+      delete capOverrides[path]
+      return { inputs: state.inputs.filter((f) => f.path !== path), results, capOverrides }
     }),
 
   clearInputs: () =>
-    set({ inputs: [], results: {}, phase: 'idle', completed: 0, total: 0, error: null }),
+    set({
+      inputs: [],
+      results: {},
+      capOverrides: {},
+      phase: 'idle',
+      completed: 0,
+      total: 0,
+      error: null,
+    }),
+
+  setCapOverride: (path, bytes) =>
+    set((state) => {
+      const capOverrides = { ...state.capOverrides }
+      if (bytes == null || bytes <= 0) delete capOverrides[path]
+      else capOverrides[path] = Math.floor(bytes)
+      return { capOverrides }
+    }),
 
   updateSettings: (patch) =>
     set((state) => {

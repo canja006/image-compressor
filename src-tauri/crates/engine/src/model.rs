@@ -131,3 +131,26 @@ pub struct InputFile {
     pub path: PathBuf,
     pub bytes: u64,
 }
+
+/// A file to process, optionally with its own size cap overriding the batch default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchItem {
+    pub path: PathBuf,
+    pub cap_override: Option<u64>,
+}
+
+impl BatchItem {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            cap_override: None,
+        }
+    }
+}
+
+impl From<PathBuf> for BatchItem {
+    fn from(path: PathBuf) -> Self {
+        Self::new(path)
+    }
+}

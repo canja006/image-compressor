@@ -19,7 +19,8 @@ pub use batch::{compress_batch, is_supported, scan_inputs, SUPPORTED_EXTENSIONS}
 pub use encode::EncodeFormat;
 pub use error::EngineError;
 pub use model::{
-    BatchSummary, CollisionPolicy, FileResult, InputFile, Options, Outcome, OutputFormat, Progress,
+    BatchItem, BatchSummary, CollisionPolicy, FileResult, InputFile, Options, Outcome,
+    OutputFormat, Progress,
 };
 pub use preview::{preview, Preview};
 pub use target::{compress_to_target, TargetResult};

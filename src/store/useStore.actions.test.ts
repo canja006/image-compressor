@@ -7,6 +7,7 @@ beforeEach(() => {
   useStore.setState({
     inputs: [],
     results: {},
+    capOverrides: {},
     phase: 'idle',
     completed: 0,
     total: 0,
@@ -75,5 +76,32 @@ describe('settings persistence', () => {
     expect(useStore.getState().settings.capValue).toBe(250)
     expect(useStore.getState().settings.capUnit).toBe('MB')
     expect(localStorage.getItem('image-compressor.settings')).toContain('250')
+  })
+})
+
+describe('per-file cap overrides', () => {
+  it('sets and floors a value, and clears on null or non-positive', () => {
+    const s = () => useStore.getState()
+    s().setCapOverride('/a.jpg', 1024 * 1024)
+    expect(s().capOverrides['/a.jpg']).toBe(1024 * 1024)
+    s().setCapOverride('/a.jpg', 500.7)
+    expect(s().capOverrides['/a.jpg']).toBe(500)
+    s().setCapOverride('/a.jpg', null)
+    expect(s().capOverrides['/a.jpg']).toBeUndefined()
+    s().setCapOverride('/a.jpg', 0)
+    expect(s().capOverrides['/a.jpg']).toBeUndefined()
+  })
+
+  it('removeInput drops the override and clearInputs wipes all', () => {
+    useStore.getState().addInputs([
+      { path: '/a.jpg', bytes: 1 },
+      { path: '/b.jpg', bytes: 2 },
+    ])
+    useStore.getState().setCapOverride('/a.jpg', 2048)
+    useStore.getState().setCapOverride('/b.jpg', 4096)
+    useStore.getState().removeInput('/a.jpg')
+    expect(useStore.getState().capOverrides).toEqual({ '/b.jpg': 4096 })
+    useStore.getState().clearInputs()
+    expect(useStore.getState().capOverrides).toEqual({})
   })
 })

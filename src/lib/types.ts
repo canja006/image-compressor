@@ -58,6 +58,12 @@ export interface InputFile {
   bytes: number
 }
 
+/** A file to compress, with an optional per-file cap overriding the batch default. */
+export interface BatchItem {
+  path: string
+  capOverride: number | null
+}
+
 /** Result of an in-memory single-image preview (the `preview_sample` command). */
 export interface Preview {
   originalBytes: number

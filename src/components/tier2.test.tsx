@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CapControls } from './CapControls'
 import { Settings } from './Settings'
 import { HelpDialog } from './HelpDialog'
+import { FileRow } from './FileRow'
 import { useStore, DEFAULT_SETTINGS, buildOptions } from '../store/useStore'
 
 beforeEach(() => {
@@ -44,6 +45,28 @@ describe('JPEG background control', () => {
     render(<Settings />)
     await user.click(screen.getByText('Output & advanced'))
     expect(screen.queryByLabelText('JPEG background color')).toBeNull()
+  })
+})
+
+describe('per-file cap override', () => {
+  it('sets an override in the batch unit via the inline editor', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ settings: { ...DEFAULT_SETTINGS, capUnit: 'KB', capValue: 500 } })
+    render(
+      <ul>
+        <FileRow
+          input={{ path: '/p/a.jpg', bytes: 1000 }}
+          result={undefined}
+          phase="idle"
+          index={0}
+          onRemove={() => {}}
+        />
+      </ul>,
+    )
+    await user.click(screen.getByText('cap'))
+    fireEvent.change(screen.getByLabelText('Per-file cap'), { target: { value: '200' } })
+    await user.click(screen.getByRole('button', { name: 'Apply per-file cap' }))
+    expect(useStore.getState().capOverrides['/p/a.jpg']).toBe(200 * 1024)
   })
 })
 

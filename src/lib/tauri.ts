@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { BatchSummary, InputFile, Options, Preview, Progress } from './types'
+import type { BatchItem, BatchSummary, InputFile, Options, Preview, Progress } from './types'
 
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff']
 
@@ -22,8 +22,8 @@ export async function scanInputs(paths: string[]): Promise<InputFile[]> {
 }
 
 /** Run a batch. Progress arrives via `onProgress` events; the resolved value is the summary. */
-export async function compressBatch(files: string[], options: Options): Promise<BatchSummary> {
-  return invoke<BatchSummary>('compress_batch', { files, options })
+export async function compressBatch(items: BatchItem[], options: Options): Promise<BatchSummary> {
+  return invoke<BatchSummary>('compress_batch', { items, options })
 }
 
 /** Ask the backend to cancel the in-flight batch (takes effect before the next file). */

@@ -3,7 +3,7 @@
 
 use crate::CancelState;
 use base64::Engine as _;
-use engine::{BatchSummary, InputFile, Options, Preview, Progress};
+use engine::{BatchItem, BatchSummary, InputFile, Options, Preview, Progress};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, State};
@@ -30,17 +30,16 @@ pub fn cancel_batch(state: State<'_, CancelState>) {
 pub async fn compress_batch(
     app: AppHandle,
     state: State<'_, CancelState>,
-    files: Vec<String>,
+    items: Vec<BatchItem>,
     options: Options,
 ) -> Result<BatchSummary, String> {
     let cancel = state.0.clone();
     cancel.store(false, Ordering::Relaxed); // reset any flag from a previous run
 
-    let bufs: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
     let progress_app = app.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        engine::compress_batch(&bufs, &options, &cancel, &move |progress: Progress| {
+        engine::compress_batch(&items, &options, &cancel, &move |progress: Progress| {
             // Emitting only fails if the window is gone; nothing to do in that case.
             let _ = progress_app.emit(PROGRESS_EVENT, progress);
         })

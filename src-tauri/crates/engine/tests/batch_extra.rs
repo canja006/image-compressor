@@ -2,7 +2,7 @@
 //! that writes an output under the cap, and the skip-if-under-cap copy path.
 
 use engine::encode::{encode, EncodeFormat};
-use engine::model::{CollisionPolicy, Options, Outcome, OutputFormat};
+use engine::model::{BatchItem, CollisionPolicy, Options, Outcome, OutputFormat};
 use engine::{compress_batch, is_supported, scan_inputs};
 use image::{DynamicImage, Rgb, RgbImage};
 use std::path::{Path, PathBuf};
@@ -76,7 +76,7 @@ fn real_batch_writes_an_output_under_the_cap() {
         ..Options::default()
     };
     let cancel = AtomicBool::new(false);
-    let summary = compress_batch(std::slice::from_ref(&src), &opts, &cancel, &|_p| {});
+    let summary = compress_batch(&[BatchItem::new(src)], &opts, &cancel, &|_p| {});
     let result = &summary.results[0];
 
     match &result.outcome {
@@ -107,7 +107,7 @@ fn skip_if_under_cap_copies_the_source() {
         ..Options::default()
     };
     let cancel = AtomicBool::new(false);
-    let summary = compress_batch(&[src], &opts, &cancel, &|_p| {});
+    let summary = compress_batch(&[BatchItem::new(src)], &opts, &cancel, &|_p| {});
 
     assert!(matches!(
         summary.results[0].outcome,

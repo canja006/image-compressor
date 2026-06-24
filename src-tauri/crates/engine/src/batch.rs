@@ -4,7 +4,7 @@
 use crate::decode::decode;
 use crate::encode::EncodeFormat;
 use crate::error::EngineError;
-use crate::model::{FileResult, InputFile, Options, Outcome, OutputFormat, Progress};
+use crate::model::{BatchItem, FileResult, InputFile, Options, Outcome, OutputFormat, Progress};
 use crate::naming::{resolve_output_path, Resolved};
 use crate::resize::downscale_to_long_edge;
 use crate::target::compress_to_target;
@@ -57,26 +57,28 @@ fn collect(path: &Path, out: &mut Vec<InputFile>, seen: &mut HashSet<PathBuf>) {
 /// `cancel` is checked before each file; `on_progress` is called once per file as it completes.
 /// One corrupt or unreachable file never aborts the batch.
 pub fn compress_batch(
-    files: &[PathBuf],
+    items: &[BatchItem],
     options: &Options,
     cancel: &AtomicBool,
     on_progress: &(dyn Fn(Progress) + Sync),
 ) -> crate::model::BatchSummary {
-    let total = files.len();
+    let total = items.len();
     let completed = AtomicUsize::new(0);
 
-    let results: Vec<FileResult> = files
+    let results: Vec<FileResult> = items
         .par_iter()
-        .map(|path| {
+        .map(|item| {
+            let path = item.path.as_path();
+            let cap = item.cap_override.unwrap_or(options.cap_bytes);
             let result = if cancel.load(Ordering::Relaxed) {
                 FileResult {
-                    input: path.clone(),
+                    input: item.path.clone(),
                     output: None,
                     original_bytes: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
                     outcome: Outcome::Cancelled,
                 }
             } else {
-                process_one(path, options)
+                process_one(path, options, cap)
             };
             let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
             on_progress(Progress {
@@ -94,9 +96,10 @@ pub fn compress_batch(
     }
 }
 
-/// Compress a single file end to end. Every failure mode is captured in the returned
-/// `FileResult`; this function does not return `Result` because a bad file is a normal outcome.
-fn process_one(path: &Path, options: &Options) -> FileResult {
+/// Compress a single file end to end against an effective `cap` (the per-file override or the
+/// batch default). Every failure mode is captured in the returned `FileResult`; this function does
+/// not return `Result` because a bad file is a normal outcome.
+fn process_one(path: &Path, options: &Options, cap: u64) -> FileResult {
     let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let mut result = FileResult {
         input: path.to_path_buf(),
@@ -108,7 +111,7 @@ fn process_one(path: &Path, options: &Options) -> FileResult {
     };
 
     // Already under the cap: copy as-is rather than re-encode (configurable).
-    if options.skip_if_under_cap && original_bytes <= options.cap_bytes && original_bytes > 0 {
+    if options.skip_if_under_cap && original_bytes <= cap && original_bytes > 0 {
         match copy_as_is(path, options) {
             Ok(Some(out)) => {
                 result.output = Some(out);
@@ -162,7 +165,7 @@ fn process_one(path: &Path, options: &Options) -> FileResult {
         None => img,
     };
 
-    match compress_to_target(&base, options.cap_bytes, fmt, options) {
+    match compress_to_target(&base, cap, fmt, options) {
         Ok(Some(target)) => match resolve_output_path(path, options, fmt.extension()) {
             Resolved::Path(out) => match std::fs::write(&out, &target.bytes) {
                 Ok(()) => {
@@ -187,7 +190,7 @@ fn process_one(path: &Path, options: &Options) -> FileResult {
             result.outcome = Outcome::Unreachable {
                 reason: format!(
                     "cap of {} bytes not reachable above {}px",
-                    options.cap_bytes, options.min_long_edge
+                    cap, options.min_long_edge
                 ),
             };
         }
@@ -277,7 +280,10 @@ mod tests {
         // A file whose cap is impossible (10 bytes) -> unreachable.
         let unreachable = write_test_jpeg(&dir, "unreachable.jpg", 600, 600);
 
-        let files = vec![good.clone(), corrupt.clone(), unreachable.clone()];
+        let items: Vec<BatchItem> = vec![good.clone(), corrupt.clone(), unreachable.clone()]
+            .into_iter()
+            .map(BatchItem::from)
+            .collect();
         let options = Options {
             cap_bytes: 10, // impossible for the real images; forces unreachable
             skip_if_under_cap: false,
@@ -286,7 +292,7 @@ mod tests {
             ..Options::default()
         };
         let cancel = AtomicBool::new(false);
-        let summary = compress_batch(&files, &options, &cancel, &|_p| {});
+        let summary = compress_batch(&items, &options, &cancel, &|_p| {});
 
         assert_eq!(summary.results.len(), 3, "every file is reported");
         assert!(!summary.cancelled);
@@ -320,9 +326,37 @@ mod tests {
             ..Options::default()
         };
         let cancel = AtomicBool::new(true); // pre-cancelled
-        let summary = compress_batch(&[f], &options, &cancel, &|_p| {});
+        let summary = compress_batch(&[BatchItem::new(f)], &options, &cancel, &|_p| {});
         assert!(summary.cancelled);
         assert!(matches!(summary.results[0].outcome, Outcome::Cancelled));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn per_item_cap_override_takes_precedence_over_the_batch_cap() {
+        let dir = std::env::temp_dir().join(format!("ic_override_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = write_test_jpeg(&dir, "x.jpg", 500, 500);
+
+        // Batch cap is huge (would easily succeed), but this item's 10-byte override is impossible.
+        let options = Options {
+            cap_bytes: 10_000_000,
+            skip_if_under_cap: false,
+            collision: CollisionPolicy::Overwrite,
+            output_dir: Some(dir.clone()),
+            ..Options::default()
+        };
+        let items = vec![BatchItem {
+            path: f,
+            cap_override: Some(10),
+        }];
+        let cancel = AtomicBool::new(false);
+        let summary = compress_batch(&items, &options, &cancel, &|_p| {});
+        assert!(
+            matches!(summary.results[0].outcome, Outcome::Unreachable { .. }),
+            "the per-item override should force unreachable, not the lenient batch cap"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
