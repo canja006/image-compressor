@@ -7,21 +7,24 @@ import { basename } from '../lib/outcome'
 import { cx } from '../lib/cx'
 import type { Preview } from '../lib/types'
 import { Badge } from './ui'
-import { IconAlert } from '../lib/icons'
+import { IconAlert, IconSpinner } from '../lib/icons'
 
 /** Live before/after preview of the first queued image, recomputed (debounced) as settings change. */
 export function SamplePreview() {
   const inputs = useStore((s) => s.inputs)
+  const selectedPath = useStore((s) => s.selectedPath)
   const settings = useStore((s) => s.settings)
   const phase = useStore((s) => s.phase)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const sample = inputs[0]
+  // Preview the clicked image, falling back to the first one.
+  const sample = inputs.find((f) => f.path === selectedPath) ?? inputs[0]
   const samplePath = sample?.path
 
   useEffect(() => {
-    if (!samplePath || !isTauri() || phase === 'running') {
+    // Only preview while configuring (idle) — once compressed, the rows/summary show the results.
+    if (!samplePath || !isTauri() || phase !== 'idle') {
       setPreview(null)
       return
     }
@@ -56,15 +59,18 @@ export function SamplePreview() {
     }
   }, [samplePath, settings, phase, inputs])
 
-  if (!sample || !isTauri()) return null
+  if (!sample || !isTauri() || phase !== 'idle') return null
 
   return (
     <section className="shrink-0 rounded-xl border border-line bg-surface p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h2 className="text-xs font-semibold text-ink">Preview</h2>
-        <span className="truncate text-[11px] text-faint" title={sample.path}>
-          {basename(sample.path)}
-        </span>
+        <div className="flex min-w-0 items-center gap-1.5">
+          {loading && preview && <IconSpinner size={12} className="shrink-0 text-faint" />}
+          <span className="truncate text-[11px] text-faint" title={sample.path}>
+            {basename(sample.path)}
+          </span>
+        </div>
       </div>
       <PreviewBody preview={preview} loading={loading} fallbackOriginal={sample.bytes} />
     </section>
@@ -82,8 +88,15 @@ function PreviewBody({
 }) {
   if (!preview) {
     return (
-      <div className="flex h-36 items-center justify-center text-xs text-faint">
-        {loading ? 'Computing preview…' : 'No preview'}
+      <div className="flex h-36 flex-col items-center justify-center gap-2.5 text-xs text-faint">
+        {loading ? (
+          <>
+            <IconSpinner size={22} className="text-muted" />
+            <span>Computing preview…</span>
+          </>
+        ) : (
+          <span>No preview</span>
+        )}
       </div>
     )
   }
@@ -126,7 +139,10 @@ function PreviewBody({
       <div className="flex items-center justify-between text-xs">
         <span className="tabular-nums text-muted">
           {formatBytes(original)} <span className="text-faint">→</span>{' '}
-          <span className="font-medium text-ink">{formatBytes(final)}</span>
+          <span className="font-medium text-ink">
+            {preview.approx ? '≈ ' : ''}
+            {formatBytes(final)}
+          </span>
         </span>
         <Badge tone="good">{saved > 0 ? `−${saved}%` : 'no gain'}</Badge>
       </div>
@@ -134,6 +150,7 @@ function PreviewBody({
         {preview.width}×{preview.height}
         {preview.quality != null && ` · q${preview.quality}`}
         {preview.downscaled && ' · downscaled'}
+        {preview.approx && ' · estimate'}
       </p>
     </div>
   )

@@ -3,10 +3,23 @@
 
 use crate::CancelState;
 use base64::Engine as _;
-use engine::{BatchItem, BatchSummary, InputFile, Options, Preview, Progress};
+use engine::{BatchItem, BatchSummary, InputFile, Options, Preview, PreviewSource, Progress};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
+
+/// A cached decoded+downscaled preview source, so changing only the cap/format doesn't re-decode.
+pub struct CacheEntry {
+    path: String,
+    max_dimension: Option<u32>,
+    source: PreviewSource,
+}
+
+/// Managed state holding the most recent preview source (single entry — the preview shows one
+/// image at a time).
+#[derive(Default)]
+pub struct PreviewCache(pub Arc<Mutex<Option<CacheEntry>>>);
 
 /// Event channel the frontend subscribes to for per-file progress.
 pub const PROGRESS_EVENT: &str = "compress-progress";
@@ -60,11 +73,52 @@ pub struct PreviewDto {
 /// Compress a single image in memory (writes nothing) and return its metrics plus a data URL,
 /// for the live before/after preview. Runs on a blocking worker.
 #[tauri::command]
-pub async fn preview_sample(path: String, options: Options) -> Result<PreviewDto, String> {
-    let preview =
-        tauri::async_runtime::spawn_blocking(move || engine::preview(Path::new(&path), &options))
-            .await
-            .map_err(|e| format!("preview task failed to join: {e}"))?;
+pub async fn preview_sample(
+    state: State<'_, PreviewCache>,
+    path: String,
+    options: Options,
+) -> Result<PreviewDto, String> {
+    let cache = state.0.clone();
+    let max_dim = options.max_dimension;
+
+    let preview = tauri::async_runtime::spawn_blocking(move || {
+        let original_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+
+        // Reuse the cached decoded+downscaled source when only the cap/format changed; re-decode
+        // only when the file or the max-dimension changed.
+        let source = {
+            let mut guard = match cache.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let hit = matches!(&*guard, Some(e) if e.path == path && e.max_dimension == max_dim);
+            if !hit {
+                match engine::prepare_source(Path::new(&path), max_dim) {
+                    Ok(src) => {
+                        *guard = Some(CacheEntry {
+                            path: path.clone(),
+                            max_dimension: max_dim,
+                            source: src,
+                        });
+                    }
+                    Err(e) => return Preview::failed(original_bytes, e.to_string()),
+                }
+            }
+            match guard.as_ref() {
+                Some(e) => e.source.clone(),
+                None => {
+                    return Preview::failed(
+                        original_bytes,
+                        "preview source unavailable".to_string(),
+                    )
+                }
+            }
+        };
+
+        engine::preview_from_source(&source, original_bytes, &options)
+    })
+    .await
+    .map_err(|e| format!("preview task failed to join: {e}"))?;
 
     let data_url = if preview.bytes.is_empty() {
         None
@@ -81,4 +135,17 @@ pub async fn preview_sample(path: String, options: Options) -> Result<PreviewDto
         meta: preview,
         data_url,
     })
+}
+
+/// Decode an image and return a small thumbnail as a data URL for the file list (null on failure).
+#[tauri::command]
+pub async fn thumbnail(path: String, max: u32) -> Result<Option<String>, String> {
+    let bytes =
+        tauri::async_runtime::spawn_blocking(move || engine::thumbnail(Path::new(&path), max))
+            .await
+            .map_err(|e| format!("thumbnail task failed to join: {e}"))?;
+    Ok(bytes.ok().map(|b| {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&b);
+        format!("data:image/jpeg;base64,{encoded}")
+    }))
 }

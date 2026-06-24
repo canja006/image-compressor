@@ -64,3 +64,51 @@ fn preview_of_a_corrupt_file_is_failed() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn preview_of_a_large_image_is_a_close_estimate() {
+    let dir = unique_dir("big");
+    let src = dir.join("big.jpg");
+    write_jpeg(&src, 2400, 1600); // larger than the preview's working dimension -> estimate
+    let original = std::fs::metadata(&src).unwrap().len();
+    let opts = Options {
+        cap_bytes: original / 4,
+        skip_if_under_cap: false,
+        ..Options::default()
+    };
+
+    let p = preview(&src, &opts);
+    assert_eq!(p.kind, "compressed");
+    assert!(
+        p.approx,
+        "a large image preview should be flagged as an estimate"
+    );
+    let final_bytes = p.final_bytes.unwrap();
+    assert!(final_bytes > 0);
+    // The extrapolated estimate should be in the cap's ballpark, not off by an order of magnitude.
+    assert!(
+        final_bytes <= opts.cap_bytes * 2,
+        "estimate {final_bytes} too far above cap {}",
+        opts.cap_bytes
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn thumbnail_is_small_and_decodable() {
+    let dir = unique_dir("thumb");
+    let src = dir.join("t.jpg");
+    write_jpeg(&src, 1600, 1200);
+
+    let bytes = engine::thumbnail(&src, 96).unwrap();
+    assert!(!bytes.is_empty());
+    let img = engine::decode::decode(&bytes).unwrap();
+    assert!(
+        img.width().max(img.height()) <= 96,
+        "thumbnail long edge {} exceeds 96",
+        img.width().max(img.height())
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

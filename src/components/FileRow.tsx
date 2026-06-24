@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { InputFile, FileResult } from '../lib/types'
 import { useStore, type Phase } from '../store/useStore'
 import { basename, describeOutcome, finalBytesOf } from '../lib/outcome'
 import { formatBytes, parseSizeToBytes, type SizeUnit } from '../lib/format'
+import { cachedThumbnail, loadThumbnail } from '../lib/thumbnails'
+import { cx } from '../lib/cx'
 import { Badge, Button, NumberField } from './ui'
 import { IconArrowRight, IconCheck, IconClose, IconImage } from '../lib/icons'
 
@@ -19,20 +21,61 @@ export function FileRow({ input, result, phase, index, onRemove }: FileRowProps)
   const finalBytes = result ? finalBytesOf(result) : null
   const pending = phase === 'running' && !result
   const capMode = useStore((s) => s.settings.capMode)
+  const selectedPath = useStore((s) => s.selectedPath)
+  const selectPreview = useStore((s) => s.selectPreview)
+  // The previewed row: the explicit selection, or the first row when nothing is selected.
+  const isSelected = selectedPath != null ? selectedPath === input.path : index === 0
+
+  const [thumb, setThumb] = useState<string | null>(() => cachedThumbnail(input.path))
+  useEffect(() => {
+    let alive = true
+    void loadThumbnail(input.path).then((url) => {
+      if (alive && url) setThumb(url)
+    })
+    return () => {
+      alive = false
+    }
+  }, [input.path])
 
   return (
     <li
-      className="group flex animate-fade-up items-center gap-3 px-4 py-2.5"
+      className={cx(
+        'group flex animate-fade-up items-center gap-3 px-4 py-2.5 transition-colors',
+        isSelected && phase === 'idle' && 'bg-sunken/60',
+      )}
       style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
     >
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line bg-sunken text-faint">
-        <IconImage size={17} />
-      </span>
+      <button
+        type="button"
+        onClick={() => selectPreview(input.path)}
+        title="Show this image in the preview"
+        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      >
+        {thumb ? (
+          <img
+            src={thumb}
+            alt=""
+            className={cx(
+              'h-9 w-9 shrink-0 rounded-md border object-cover',
+              isSelected ? 'border-accent/40 ring-2 ring-accent/25' : 'border-line',
+            )}
+          />
+        ) : (
+          <span
+            className={cx(
+              'grid h-9 w-9 shrink-0 place-items-center rounded-md border bg-sunken text-faint',
+              isSelected ? 'border-accent/40 ring-2 ring-accent/25' : 'border-line',
+            )}
+          >
+            <IconImage size={17} />
+          </span>
+        )}
 
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-ink">{basename(input.path)}</p>
-        <p className="truncate text-[11px] text-faint">{view ? view.detail : input.path}</p>
-      </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-ink">{basename(input.path)}</p>
+          <p className="truncate text-[11px] text-faint">{view ? view.detail : input.path}</p>
+        </div>
+      </button>
 
       <div className="flex items-center gap-2.5 tabular-nums">
         <span className="text-xs text-muted">{formatBytes(input.bytes)}</span>

@@ -22,5 +22,7 @@ pub use model::{
     BatchItem, BatchSummary, CollisionPolicy, FileResult, InputFile, Options, Outcome,
     OutputFormat, Progress,
 };
-pub use preview::{preview, Preview};
+pub use preview::{
+    prepare_source, preview, preview_from_source, thumbnail, Preview, PreviewSource,
+};
 pub use target::{compress_to_target, TargetResult};

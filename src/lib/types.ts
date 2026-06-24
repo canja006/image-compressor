@@ -76,6 +76,8 @@ export interface Preview {
   width: number | null
   height: number | null
   downscaled: boolean
+  /** True when finalBytes is an estimate extrapolated from a downscaled search (large images). */
+  approx: boolean
   mime: string | null
   error: string | null
   /** Data URL of the compressed result, ready for an `<img src>` (null unless compressed). */

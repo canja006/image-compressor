@@ -1,6 +1,6 @@
 [package]
 name = "image-compressor"
-version = "0.3.0"
+version = "0.3.1"
 description = "Target-size image compressor — compress and resize images to hit a file-size cap."
 authors = ["Antti Jakunaho"]
 edition = "2021"
@@ -27,6 +27,16 @@ base64 = "0.22"
 [workspace]
 members = ["crates/engine"]
 resolver = "2"
+
+# Optimize dependencies even in dev/test builds so image decode/encode (image, rav1e, oxipng,
+# fast_image_resize) runs at full speed during `tauri dev` and `cargo test`, while our own crates
+# stay unoptimized for quick incremental compiles. Without this, the live preview is painfully slow
+# in debug mode (it is fast in the release installers).
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.test.package."*"]
+opt-level = 3
 
 [profile.release]
 codegen-units = 1

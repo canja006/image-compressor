@@ -17,11 +17,13 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(CancelState::default())
+        .manage(commands::PreviewCache::default())
         .invoke_handler(tauri::generate_handler![
             commands::scan_inputs,
             commands::compress_batch,
             commands::cancel_batch,
             commands::preview_sample,
+            commands::thumbnail,
         ])
         .run(tauri::generate_context!());
 

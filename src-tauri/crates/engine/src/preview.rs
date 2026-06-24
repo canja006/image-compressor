@@ -1,11 +1,14 @@
 //! Single-image preview: run the size search in memory and report what the user would get, plus
 //! the encoded bytes for a live before/after readout. Nothing is written to disk.
 
-use crate::batch::resolve_format;
+use crate::batch::resolve_format_with_alpha;
 use crate::decode::decode;
+use crate::encode::{encode, EncodeFormat};
+use crate::error::EngineError;
 use crate::model::Options;
 use crate::resize::downscale_to_long_edge;
 use crate::target::compress_to_target;
+use image::DynamicImage;
 use serde::Serialize;
 use std::path::Path;
 
@@ -23,6 +26,8 @@ pub struct Preview {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub downscaled: bool,
+    /// True when the size is an estimate extrapolated from a downscaled search (large images).
+    pub approx: bool,
     pub mime: Option<String>,
     pub error: Option<String>,
     /// Encoded preview bytes (only when `kind == "compressed"`). Skipped in serialization — the
@@ -32,7 +37,7 @@ pub struct Preview {
 }
 
 impl Preview {
-    fn failed(original_bytes: u64, error: String) -> Self {
+    pub fn failed(original_bytes: u64, error: String) -> Self {
         Preview {
             original_bytes,
             source_width: 0,
@@ -44,6 +49,7 @@ impl Preview {
             width: None,
             height: None,
             downscaled: false,
+            approx: false,
             mime: None,
             error: Some(error),
             bytes: Vec::new(),
@@ -51,52 +57,113 @@ impl Preview {
     }
 }
 
-/// Compress one image entirely in memory and return the result plus its encoded bytes.
-pub fn preview(path: &Path, options: &Options) -> Preview {
-    let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+/// A decoded, downscaled image ready for the preview search. Cacheable so changing only the cap or
+/// format doesn't re-decode the file — the expensive decode + resize happens once per image.
+#[derive(Clone)]
+pub struct PreviewSource {
+    work: DynamicImage,
+    base_width: u32,
+    base_height: u32,
+    work_pixels: u64,
+    base_pixels: u64,
+    has_alpha: bool,
+    source_width: u32,
+    source_height: u32,
+}
 
-    let raw = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => return Preview::failed(original_bytes, format!("read: {e}")),
-    };
-    let img = match decode(&raw) {
-        Ok(i) => i,
-        Err(e) => return Preview::failed(original_bytes, e.to_string()),
-    };
+/// Longest-edge cap for the downscaled copy the preview searches on. Small on purpose: the preview
+/// panel displays it tiny, and fewer pixels mean each of the ~8 search encodes is fast. The size is
+/// extrapolated back to the full resolution, so accuracy holds.
+const PREVIEW_MAX_DIM: u32 = 720;
 
-    let fmt = resolve_format(options.output_format, &img, options.background);
+/// Decode `path`, apply the max-dimension cap, and downscale a working copy for a fast preview
+/// search. The result is cacheable across cap/format changes (only `max_dimension` invalidates it).
+pub fn prepare_source(
+    path: &Path,
+    max_dimension: Option<u32>,
+) -> Result<PreviewSource, EngineError> {
+    let raw = std::fs::read(path).map_err(|e| EngineError::Io {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    let img = decode(&raw)?;
+    let source_width = img.width();
+    let source_height = img.height();
+    let has_alpha = img.color().has_alpha();
+
+    // The intended output resolution (after any max-dimension cap).
+    let base = match max_dimension {
+        Some(maxd) => downscale_to_long_edge(&img, maxd)?,
+        None => img,
+    };
+    let base_width = base.width();
+    let base_height = base.height();
+    let base_pixels = u64::from(base_width) * u64::from(base_height);
+
+    let work = downscale_to_long_edge(&base, PREVIEW_MAX_DIM)?;
+    let work_pixels = u64::from(work.width()) * u64::from(work.height());
+
+    Ok(PreviewSource {
+        work,
+        base_width,
+        base_height,
+        work_pixels,
+        base_pixels,
+        has_alpha,
+        source_width,
+        source_height,
+    })
+}
+
+/// Run the size search on an already-prepared source. Searches the downscaled copy and extrapolates
+/// the size: lossy size scales ~linearly with pixel count at a fixed quality, so the quality found
+/// matches the full-resolution result and the estimate is close (flagged `approx` when downscaled).
+pub fn preview_from_source(
+    source: &PreviewSource,
+    original_bytes: u64,
+    options: &Options,
+) -> Preview {
+    let fmt =
+        resolve_format_with_alpha(options.output_format, source.has_alpha, options.background);
     let mut p = Preview {
         original_bytes,
-        source_width: img.width(),
-        source_height: img.height(),
-        has_alpha: img.color().has_alpha(),
+        source_width: source.source_width,
+        source_height: source.source_height,
+        has_alpha: source.has_alpha,
         kind: "unreachable".to_string(),
         final_bytes: None,
         quality: None,
         width: None,
         height: None,
         downscaled: false,
+        approx: false,
         mime: None,
         error: None,
         bytes: Vec::new(),
     };
 
-    let base = match options.max_dimension {
-        Some(maxd) => match downscale_to_long_edge(&img, maxd) {
-            Ok(i) => i,
-            Err(e) => return Preview::failed(original_bytes, e.to_string()),
-        },
-        None => img,
+    let approx = source.work_pixels < source.base_pixels;
+    let ratio = (source.work_pixels as f64) / (source.base_pixels as f64); // in (0, 1]
+    let search_cap = if approx {
+        ((options.cap_bytes as f64) * ratio).round().max(1.0) as u64
+    } else {
+        options.cap_bytes
     };
 
-    match compress_to_target(&base, options.cap_bytes, fmt, options) {
+    match compress_to_target(&source.work, search_cap, fmt, options) {
         Ok(Some(t)) => {
+            let final_bytes = if approx {
+                ((t.bytes.len() as f64) / ratio).round() as u64
+            } else {
+                t.bytes.len() as u64
+            };
             p.kind = "compressed".to_string();
-            p.final_bytes = Some(t.bytes.len() as u64);
+            p.final_bytes = Some(final_bytes);
             p.quality = t.quality;
-            p.width = Some(t.width);
-            p.height = Some(t.height);
+            p.width = Some(source.base_width);
+            p.height = Some(source.base_height);
             p.downscaled = t.downscaled;
+            p.approx = approx;
             p.mime = Some(fmt.mime().to_string());
             p.bytes = t.bytes;
         }
@@ -104,4 +171,31 @@ pub fn preview(path: &Path, options: &Options) -> Preview {
         Err(e) => return Preview::failed(original_bytes, e.to_string()),
     }
     p
+}
+
+/// Compress one image entirely in memory and return the result plus its encoded bytes.
+pub fn preview(path: &Path, options: &Options) -> Preview {
+    let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    match prepare_source(path, options.max_dimension) {
+        Ok(source) => preview_from_source(&source, original_bytes, options),
+        Err(e) => Preview::failed(original_bytes, e.to_string()),
+    }
+}
+
+/// Decode `path` and return a small JPEG thumbnail (longest edge `max`) for the file list.
+/// Transparent images are flattened onto white for the thumbnail.
+pub fn thumbnail(path: &Path, max: u32) -> Result<Vec<u8>, EngineError> {
+    let raw = std::fs::read(path).map_err(|e| EngineError::Io {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    let img = decode(&raw)?;
+    let small = downscale_to_long_edge(&img, max.max(16))?;
+    encode(
+        &small,
+        EncodeFormat::Jpeg {
+            background: [255, 255, 255],
+        },
+        Some(70),
+    )
 }

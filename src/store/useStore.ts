@@ -96,6 +96,8 @@ interface StoreState {
   results: Record<string, FileResult>
   /** Per-file size-cap overrides in bytes, keyed by path. Absent = use the batch cap. */
   capOverrides: Record<string, number>
+  /** Which file the preview shows. `null` falls back to the first input. */
+  selectedPath: string | null
   phase: Phase
   completed: number
   total: number
@@ -105,6 +107,7 @@ interface StoreState {
   addInputs: (files: InputFile[]) => void
   removeInput: (path: string) => void
   clearInputs: () => void
+  selectPreview: (path: string) => void
   setCapOverride: (path: string, bytes: number | null) => void
   updateSettings: (patch: Partial<Settings>) => void
   beginRun: () => void
@@ -118,6 +121,7 @@ export const useStore = create<StoreState>((set, get) => ({
   inputs: [],
   results: {},
   capOverrides: {},
+  selectedPath: null,
   phase: 'idle',
   completed: 0,
   total: 0,
@@ -141,7 +145,12 @@ export const useStore = create<StoreState>((set, get) => ({
       delete results[path]
       const capOverrides = { ...state.capOverrides }
       delete capOverrides[path]
-      return { inputs: state.inputs.filter((f) => f.path !== path), results, capOverrides }
+      return {
+        inputs: state.inputs.filter((f) => f.path !== path),
+        results,
+        capOverrides,
+        selectedPath: state.selectedPath === path ? null : state.selectedPath,
+      }
     }),
 
   clearInputs: () =>
@@ -149,11 +158,14 @@ export const useStore = create<StoreState>((set, get) => ({
       inputs: [],
       results: {},
       capOverrides: {},
+      selectedPath: null,
       phase: 'idle',
       completed: 0,
       total: 0,
       error: null,
     }),
+
+  selectPreview: (path) => set({ selectedPath: path }),
 
   setCapOverride: (path, bytes) =>
     set((state) => {

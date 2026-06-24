@@ -38,6 +38,12 @@ export async function previewSample(path: string, options: Options): Promise<Pre
   return invoke<Preview>('preview_sample', { path, options })
 }
 
+/** Small thumbnail (data URL) of an image for the file list, or null if it can't be read. */
+export async function getThumbnail(path: string, max: number): Promise<string | null> {
+  if (!isTauri()) return null
+  return invoke<string | null>('thumbnail', { path, max })
+}
+
 /** Subscribe to per-file progress events. Returns an unlisten function. */
 export async function onProgress(handler: (p: Progress) => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {}

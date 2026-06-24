@@ -8,6 +8,7 @@ beforeEach(() => {
     inputs: [],
     results: {},
     capOverrides: {},
+    selectedPath: null,
     phase: 'idle',
     completed: 0,
     total: 0,
@@ -90,6 +91,17 @@ describe('per-file cap overrides', () => {
     expect(s().capOverrides['/a.jpg']).toBeUndefined()
     s().setCapOverride('/a.jpg', 0)
     expect(s().capOverrides['/a.jpg']).toBeUndefined()
+  })
+
+  it('selectPreview sets the path and removing that input clears the selection', () => {
+    useStore.getState().addInputs([
+      { path: '/a.jpg', bytes: 1 },
+      { path: '/b.jpg', bytes: 2 },
+    ])
+    useStore.getState().selectPreview('/b.jpg')
+    expect(useStore.getState().selectedPath).toBe('/b.jpg')
+    useStore.getState().removeInput('/b.jpg')
+    expect(useStore.getState().selectedPath).toBeNull()
   })
 
   it('removeInput drops the override and clearInputs wipes all', () => {

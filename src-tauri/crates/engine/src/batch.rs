@@ -209,12 +209,20 @@ pub(crate) fn resolve_format(
     img: &DynamicImage,
     background: [u8; 3],
 ) -> EncodeFormat {
+    resolve_format_with_alpha(of, img.color().has_alpha(), background)
+}
+
+pub(crate) fn resolve_format_with_alpha(
+    of: OutputFormat,
+    has_alpha: bool,
+    background: [u8; 3],
+) -> EncodeFormat {
     match of {
         OutputFormat::Jpeg => EncodeFormat::Jpeg { background },
         OutputFormat::Png => EncodeFormat::Png,
         OutputFormat::Avif => EncodeFormat::Avif,
         OutputFormat::Keep => {
-            if img.color().has_alpha() {
+            if has_alpha {
                 EncodeFormat::Png
             } else {
                 EncodeFormat::Jpeg { background }
