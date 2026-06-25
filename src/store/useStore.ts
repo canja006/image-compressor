@@ -5,6 +5,7 @@ import type {
   CollisionPolicy,
   FileResult,
   InputFile,
+  MetadataMode,
   Options,
   OutputFormat,
   Progress,
@@ -39,6 +40,16 @@ export interface Settings {
   jpegQualityMax: number
   /** Fill color for transparent areas when flattening to JPEG. */
   background: [number, number, number]
+  /** How EXIF/metadata is re-embedded on output. */
+  metadata: MetadataMode
+  /** Convert pixels to sRGB (via the source ICC) before encoding. */
+  convertSrgb: boolean
+  /** Enable the SSIM perceptual-quality floor. */
+  perceptualFloorEnabled: boolean
+  /** Floor as a percentage 50–100, mapped to an SSIM of 0.50–1.00 for the engine. */
+  perceptualFloorPct: number
+  /** Show the SSIM/PSNR readout in the preview (B6). UI-only — not sent to the engine. */
+  showMetrics: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -60,6 +71,11 @@ export const DEFAULT_SETTINGS: Settings = {
   jpegQualityMin: 10,
   jpegQualityMax: 95,
   background: [255, 255, 255],
+  metadata: 'stripAll',
+  convertSrgb: false,
+  perceptualFloorEnabled: false,
+  perceptualFloorPct: 90,
+  showMetrics: false,
 }
 
 const SETTINGS_KEY = 'image-compressor.settings'
@@ -112,6 +128,11 @@ export function buildOptions(s: Settings): Options {
     jpegQualityMax: s.jpegQualityMax,
     minLongEdge: 16,
     background: s.background,
+    metadata: s.metadata,
+    convertSrgb: s.convertSrgb,
+    perceptualFloor: s.perceptualFloorEnabled
+      ? Math.min(1, Math.max(0, s.perceptualFloorPct / 100))
+      : null,
   }
 }
 

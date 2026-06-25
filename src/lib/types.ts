@@ -5,6 +5,10 @@ export type OutputFormat = 'keep' | 'jpeg' | 'png' | 'avif'
 
 export type CollisionPolicy = 'suffix' | 'overwrite' | 'skip'
 
+/** How EXIF/metadata is handled on output (mirrors the Rust `MetadataMode`). Orientation is always
+ *  baked into the pixels regardless; this controls what metadata is re-embedded. */
+export type MetadataMode = 'stripAll' | 'keepAll' | 'keepOrientationIcc' | 'stripGps'
+
 /** Which edge a crop is anchored to on the cropped axis when producing an exact size. */
 export type Anchor = 'start' | 'center' | 'end'
 
@@ -26,6 +30,13 @@ export interface Options {
   jpegQualityMax: number
   minLongEdge: number
   background: [number, number, number]
+  /** How EXIF/metadata is re-embedded on output. */
+  metadata: MetadataMode
+  /** Convert pixels to sRGB (via the source ICC) before encoding. */
+  convertSrgb: boolean
+  /** Optional SSIM floor (0.0–1.0): the search won't ship below this fidelity, trading resolution
+   *  instead. `null` disables it. */
+  perceptualFloor: number | null
 }
 
 export type Outcome =
@@ -88,6 +99,10 @@ export interface Preview {
   approx: boolean
   mime: string | null
   error: string | null
+  /** SSIM (0–1) and PSNR (dB) of the result vs the source — the B6 quality readout. `null` when not
+   *  computable (AVIF) or non-finite (lossless PSNR serializes to null). */
+  ssim: number | null
+  psnr: number | null
   /** Data URL of the compressed result, ready for an `<img src>` (null unless compressed). */
   dataUrl: string | null
 }

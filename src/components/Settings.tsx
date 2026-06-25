@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '../store/useStore'
 import { pickOutputDir } from '../lib/tauri'
-import type { CollisionPolicy } from '../lib/types'
+import type { CollisionPolicy, MetadataMode } from '../lib/types'
 import { basename } from '../lib/outcome'
 import { hexToRgb, rgbToHex } from '../lib/color'
 import { Button, Field, NumberField, Segmented, Toggle } from './ui'
@@ -155,6 +155,92 @@ export function Settings() {
               />
             </div>
           </Field>
+
+          <div className="space-y-5 border-t border-line pt-5">
+            <Field
+              label="Metadata"
+              hint="Orientation is always applied to the pixels. This controls what EXIF/ICC stays embedded in the file."
+            >
+              <Segmented<MetadataMode>
+                stretch
+                ariaLabel="Metadata handling"
+                value={settings.metadata}
+                onChange={(metadata) => update({ metadata })}
+                options={[
+                  {
+                    value: 'stripAll',
+                    label: 'Strip all',
+                    title: 'Remove all metadata — smallest and most private',
+                  },
+                  {
+                    value: 'keepOrientationIcc',
+                    label: 'Keep ICC',
+                    title: 'Re-embed the color profile only',
+                  },
+                  {
+                    value: 'keepAll',
+                    label: 'Keep all',
+                    title: 'Re-embed the color profile (full EXIF re-embedding is coming)',
+                  },
+                  {
+                    value: 'stripGps',
+                    label: 'No GPS',
+                    title: 'Keep the color profile but strip location data',
+                  },
+                ]}
+              />
+            </Field>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-ink">Convert to sRGB</p>
+                <p className="text-[11px] text-faint">
+                  Normalizes wide-gamut photos for consistent color on the web.
+                </p>
+              </div>
+              <Toggle
+                ariaLabel="Convert to sRGB"
+                checked={settings.convertSrgb}
+                onChange={(convertSrgb) => update({ convertSrgb })}
+              />
+            </div>
+
+            <Field
+              label="Perceptual quality floor"
+              hint="Won't ship output below this visual similarity (SSIM) — trades resolution to stay sharp instead of dropping quality."
+            >
+              <div className="flex items-center gap-2">
+                <Toggle
+                  ariaLabel="Enable the perceptual quality floor"
+                  checked={settings.perceptualFloorEnabled}
+                  onChange={(perceptualFloorEnabled) => update({ perceptualFloorEnabled })}
+                />
+                <NumberField
+                  className="flex-1"
+                  value={settings.perceptualFloorPct}
+                  min={50}
+                  max={100}
+                  step={1}
+                  suffix="% SSIM"
+                  disabled={running || !settings.perceptualFloorEnabled}
+                  ariaLabel="Perceptual floor percentage"
+                  onChange={(v) => update({ perceptualFloorPct: Math.round(v) })}
+                />
+              </div>
+            </Field>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-ink">Show quality metrics</p>
+                <p className="text-[11px] text-faint">SSIM &amp; PSNR next to the size in the preview.</p>
+              </div>
+              <Toggle
+                ariaLabel="Show quality metrics in the preview"
+                checked={settings.showMetrics}
+                onChange={(showMetrics) => update({ showMetrics })}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

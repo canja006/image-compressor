@@ -80,7 +80,12 @@ export function SamplePreview() {
           </span>
         </div>
       </div>
-      <PreviewBody preview={preview} loading={loading} fallbackOriginal={sample.bytes} />
+      <PreviewBody
+        preview={preview}
+        loading={loading}
+        fallbackOriginal={sample.bytes}
+        showMetrics={settings.showMetrics}
+      />
     </section>
   )
 }
@@ -89,10 +94,12 @@ function PreviewBody({
   preview,
   loading,
   fallbackOriginal,
+  showMetrics,
 }: {
   preview: Preview | null
   loading: boolean
   fallbackOriginal: number
+  showMetrics: boolean
 }) {
   if (!preview) {
     return (
@@ -160,6 +167,13 @@ function PreviewBody({
         {preview.downscaled && ' · downscaled'}
         {preview.approx && ' · estimate'}
       </p>
+      {showMetrics && (preview.ssim != null || preview.psnr != null) && (
+        <p className="font-mono text-[11px] text-faint">
+          {preview.ssim != null && `SSIM ${preview.ssim.toFixed(3)}`}
+          {preview.ssim != null && preview.psnr != null && ' · '}
+          {preview.psnr != null && `PSNR ${preview.psnr.toFixed(1)} dB`}
+        </p>
+      )}
     </div>
   )
 }
