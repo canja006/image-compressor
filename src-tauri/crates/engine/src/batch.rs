@@ -140,19 +140,29 @@ fn process_one(
         },
     };
 
-    // Already under the cap: copy as-is rather than re-encode (configurable).
+    // Already under the cap: copy as-is rather than re-encode (configurable). But only after
+    // confirming it actually decodes — a corrupt/garbage file that merely has an image extension and
+    // happens to be under the cap must be reported as failed, never silently copied through as a
+    // "skipped" valid image (per-file isolation: record the reason and continue).
     if options.skip_if_under_cap && original_bytes <= cap && original_bytes > 0 {
-        match copy_as_is(path, options, seq, date) {
-            Ok(Some(out)) => {
-                result.output = Some(out);
-                result.outcome = Outcome::SkippedUnderCap {
-                    bytes: original_bytes,
-                };
-            }
-            Ok(None) => result.outcome = Outcome::SkippedCollision,
-            Err(e) => {
+        match validate_image_dimensions(path) {
+            Some(dims) => match copy_as_is(path, options, seq, date, dims) {
+                Ok(Some(out)) => {
+                    result.output = Some(out);
+                    result.outcome = Outcome::SkippedUnderCap {
+                        bytes: original_bytes,
+                    };
+                }
+                Ok(None) => result.outcome = Outcome::SkippedCollision,
+                Err(e) => {
+                    result.outcome = Outcome::Failed {
+                        reason: e.to_string(),
+                    }
+                }
+            },
+            None => {
                 result.outcome = Outcome::Failed {
-                    reason: e.to_string(),
+                    reason: "unreadable or corrupt image".to_string(),
                 }
             }
         }
@@ -326,21 +336,31 @@ pub(crate) fn resolve_format_with_alpha(
     }
 }
 
+/// Validate that `path` is a decodable image by reading only its header, returning its pixel
+/// dimensions. Content-based like [`crate::decode::decode`] (so a file whose extension disagrees with
+/// its bytes still validates by its real content), and a non-image — text, truncated, or empty header
+/// — returns `None`. Cheap: it reads the header, not the pixels.
+fn validate_image_dimensions(path: &Path) -> Option<(u32, u32)> {
+    image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+}
+
 /// Copy a source that is already under the cap to its resolved output path, keeping the original
 /// extension. Returns the destination, or `None` if a `Skip` collision policy declined it. Honors a
-/// rename pattern; `{w}`/`{h}` come from a cheap header read since the copy isn't decoded otherwise.
+/// rename pattern; `{w}`/`{h}` come from `dims` (already read when the image was validated).
 fn copy_as_is(
     path: &Path,
     options: &Options,
     seq: usize,
     date: &str,
+    dims: (u32, u32),
 ) -> Result<Option<PathBuf>, EngineError> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("img");
-    let (width, height) = if options.rename_pattern.is_some() {
-        image::image_dimensions(path).unwrap_or((0, 0))
-    } else {
-        (0, 0)
-    };
+    let (width, height) = dims;
     let info = NameInfo {
         seq,
         width,
@@ -606,6 +626,54 @@ mod tests {
         assert_eq!(ymd_from_days(31), (1970, 2, 1));
         assert_eq!(ymd_from_days(59), (1970, 3, 1)); // 1970 is not a leap year
         assert_eq!(ymd_from_days(365), (1971, 1, 1));
+    }
+
+    #[test]
+    fn corrupt_file_under_cap_is_failed_not_skipped() {
+        // Regression: a garbage file with an image extension, under the cap, used to be copied
+        // through as a "skipped (under cap)" image because the skip path never decoded it.
+        let dir = std::env::temp_dir().join(format!("ic_corrupt_skip_{}", std::process::id()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        let corrupt = dir.join("corrupt.png");
+        std::fs::write(&corrupt, b"this is definitely not a png").unwrap();
+        let good = write_test_jpeg(&dir, "good.jpg", 200, 200);
+
+        let options = Options {
+            cap_bytes: 5_000_000, // both inputs are comfortably under this
+            skip_if_under_cap: true,
+            collision: CollisionPolicy::Overwrite,
+            output_dir: Some(out.clone()),
+            ..Options::default()
+        };
+        let cancel = AtomicBool::new(false);
+        let summary = compress_batch(
+            &[
+                BatchItem::new(corrupt.clone()),
+                BatchItem::new(good.clone()),
+            ],
+            &options,
+            &cancel,
+            &|_p| {},
+        );
+
+        let result_for = |p: &PathBuf| summary.results.iter().find(|r| &r.input == p).unwrap();
+        assert!(
+            matches!(result_for(&corrupt).outcome, Outcome::Failed { .. }),
+            "a corrupt under-cap file must be Failed, not SkippedUnderCap"
+        );
+        assert!(
+            result_for(&corrupt).output.is_none(),
+            "a corrupt file must not be copied to the output folder"
+        );
+        // Per-file isolation: the valid image is still handled (skipped as-is) alongside it.
+        assert!(matches!(
+            result_for(&good).outcome,
+            Outcome::SkippedUnderCap { .. }
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
