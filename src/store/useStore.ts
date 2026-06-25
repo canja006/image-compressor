@@ -153,6 +153,9 @@ interface StoreState {
   /** Source pixel dimensions of the previewed image, for the live exact-crop note. */
   previewSource: { width: number; height: number } | null
   phase: Phase
+  /** True between a cancel request and the run actually ending — drives instant Cancel feedback
+   *  while `phase` stays `'running'` so every control stays disabled until the batch resolves. */
+  cancelling: boolean
   completed: number
   total: number
   error: string | null
@@ -168,6 +171,8 @@ interface StoreState {
   setCapOverride: (path: string, bytes: number | null) => void
   updateSettings: (patch: Partial<Settings>) => void
   beginRun: () => void
+  /** Mark a cancel as requested (only while running) so the UI can show "Cancelling…" immediately. */
+  requestCancel: () => void
   recordProgress: (p: Progress) => void
   endRun: (summary: BatchSummary) => void
   setError: (message: string) => void
@@ -182,6 +187,7 @@ export const useStore = create<StoreState>((set, get) => ({
   selectedPath: null,
   previewSource: null,
   phase: 'idle',
+  cancelling: false,
   completed: 0,
   total: 0,
   error: null,
@@ -255,11 +261,15 @@ export const useStore = create<StoreState>((set, get) => ({
   beginRun: () =>
     set((state) => ({
       phase: 'running',
+      cancelling: false,
       results: {},
       completed: 0,
       total: state.inputs.length,
       error: null,
     })),
+
+  // Only meaningful mid-run; flips the label/button to "Cancelling…" the instant the user clicks.
+  requestCancel: () => set((state) => (state.phase === 'running' ? { cancelling: true } : {})),
 
   recordProgress: (p) =>
     set((state) => ({
@@ -273,10 +283,16 @@ export const useStore = create<StoreState>((set, get) => ({
     set((state) => {
       const results = { ...state.results }
       for (const r of summary.results) results[r.input] = r
-      return { phase: 'done', results, completed: get().total || summary.results.length }
+      return {
+        phase: 'done',
+        cancelling: false,
+        results,
+        completed: get().total || summary.results.length,
+      }
     }),
 
-  setError: (message) => set({ error: message, phase: 'done' }),
+  setError: (message) => set({ error: message, phase: 'done', cancelling: false }),
 
-  resetRun: () => set({ phase: 'idle', results: {}, completed: 0, total: 0, error: null }),
+  resetRun: () =>
+    set({ phase: 'idle', cancelling: false, results: {}, completed: 0, total: 0, error: null }),
 }))

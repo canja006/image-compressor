@@ -39,6 +39,9 @@ export function useCompressor() {
   }, [])
 
   const cancel = useCallback(() => {
+    // Flip the UI to "Cancelling…" immediately; the backend honors the flag before the next file,
+    // so the run resolves shortly after (the in-flight file still finishes).
+    useStore.getState().requestCancel()
     void cancelBatch()
   }, [])
 

@@ -79,7 +79,7 @@ fn stop_handle(mut handle: WatchHandle) {
 /// stopped first. Requires an output folder distinct from the watched folder so results are never
 /// re-ingested.
 #[tauri::command]
-pub fn start_watch(
+pub async fn start_watch(
     app: AppHandle,
     state: State<'_, WatchState>,
     dir: String,
@@ -97,37 +97,79 @@ pub fn start_watch(
         return Err("The output folder must differ from the watched folder".to_string());
     }
 
-    let mut guard = state.0.lock().map_err(|_| "watch state poisoned")?;
-    if let Some(existing) = guard.take() {
-        stop_handle(existing);
-    }
-
+    // Spawn the worker and wait for it to confirm the OS watch is actually live *before* committing
+    // the handle, so a setup failure surfaces as an error here and never leaves the toggle stuck "on".
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = stop.clone();
     let worker_app = app.clone();
-
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     let worker = std::thread::Builder::new()
         .name("watch-folder".to_string())
-        .spawn(move || watch_loop(worker_app, watch_dir, options, output_dir, worker_stop))
+        .spawn(move || {
+            watch_loop(
+                worker_app,
+                watch_dir,
+                options,
+                output_dir,
+                worker_stop,
+                ready_tx,
+            )
+        })
         .map_err(|e| format!("could not start watcher thread: {e}"))?;
 
-    *guard = Some(WatchHandle {
-        stop,
-        worker: Some(worker),
-    });
+    // The worker reports readiness in milliseconds; wait off the command thread so the UI never
+    // blocks. The timeout guards the (unreachable) case of a worker that never reports.
+    let setup = tauri::async_runtime::spawn_blocking(move || {
+        ready_rx.recv_timeout(Duration::from_secs(10))
+    })
+    .await
+    .map_err(|e| format!("watcher readiness task failed: {e}"))?;
+    match setup {
+        Ok(Ok(())) => {} // the OS watch is live
+        Ok(Err(message)) => {
+            let _ = worker.join();
+            return Err(message);
+        }
+        Err(_) => {
+            stop.store(true, Ordering::Relaxed); // timed out / worker gone: tell it to exit
+            return Err("the watcher did not start in time".to_string());
+        }
+    }
+
+    // Commit the live worker, displacing any previous watch. The swap is synchronous (no await held
+    // under the lock) so concurrent starts can't interleave; the displaced worker is reaped off-thread.
+    let previous = {
+        let mut guard = match state.0.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                stop.store(true, Ordering::Relaxed); // can't store it — let it stop itself
+                return Err("watch state poisoned".to_string());
+            }
+        };
+        guard.replace(WatchHandle {
+            stop,
+            worker: Some(worker),
+        })
+    };
+    if let Some(prev) = previous {
+        let _ = tauri::async_runtime::spawn_blocking(move || stop_handle(prev)).await;
+    }
+
     let _ = app.emit(WATCH_EVENT, WatchEvent::Started { dir });
     Ok(())
 }
 
 /// Stop the active watch (no-op if none). Always emits `Stopped`.
 #[tauri::command]
-pub fn stop_watch(app: AppHandle, state: State<'_, WatchState>) -> Result<(), String> {
+pub async fn stop_watch(app: AppHandle, state: State<'_, WatchState>) -> Result<(), String> {
     let handle = {
         let mut guard = state.0.lock().map_err(|_| "watch state poisoned")?;
         guard.take()
     };
     if let Some(handle) = handle {
-        stop_handle(handle);
+        // Join off the command thread so the Stop button never blocks the UI while the in-flight file
+        // finishes compressing.
+        let _ = tauri::async_runtime::spawn_blocking(move || stop_handle(handle)).await;
     }
     let _ = app.emit(WATCH_EVENT, WatchEvent::Stopped);
     Ok(())
@@ -147,6 +189,7 @@ fn watch_loop(
     options: Options,
     output_dir: PathBuf,
     stop: Arc<AtomicBool>,
+    ready: mpsc::Sender<Result<(), String>>,
 ) {
     let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
     let mut watcher = match RecommendedWatcher::new(
@@ -157,24 +200,19 @@ fn watch_loop(
     ) {
         Ok(w) => w,
         Err(e) => {
-            let _ = app.emit(
-                WATCH_EVENT,
-                WatchEvent::Error {
-                    message: format!("watcher init failed: {e}"),
-                },
-            );
+            // Report the setup failure to start_watch (which surfaces it as the command error)
+            // rather than emitting a status event the toggle would race with.
+            let _ = ready.send(Err(format!("watcher init failed: {e}")));
             return;
         }
     };
     if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
-        let _ = app.emit(
-            WATCH_EVENT,
-            WatchEvent::Error {
-                message: format!("cannot watch {}: {e}", dir.display()),
-            },
-        );
+        let _ = ready.send(Err(format!("cannot watch {}: {e}", dir.display())));
         return;
     }
+    // The OS watch is live — let start_watch commit the handle and emit `Started`.
+    let _ = ready.send(Ok(()));
+    drop(ready);
 
     // Per-path size trackers. A file is processed once its size is stable; it's dropped if it
     // vanishes before settling. The cancel flag stays false — single-file ingests aren't cancelled.

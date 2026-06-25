@@ -7,6 +7,7 @@ export function RunBar() {
   const { start, cancel } = useCompressor()
   const count = useStore((s) => s.inputs.length)
   const phase = useStore((s) => s.phase)
+  const cancelling = useStore((s) => s.cancelling)
   const completed = useStore((s) => s.completed)
   const total = useStore((s) => s.total)
   const settings = useStore((s) => s.settings)
@@ -20,7 +21,7 @@ export function RunBar() {
     return (
       <div className="space-y-3">
         <div className="flex items-baseline justify-between text-xs">
-          <span className="font-medium text-ink">Compressing…</span>
+          <span className="font-medium text-ink">{cancelling ? 'Cancelling…' : 'Compressing…'}</span>
           <span className="tabular-nums text-muted">
             {completed} / {total}
           </span>
@@ -31,8 +32,8 @@ export function RunBar() {
             style={{ width: `${pct}%` }}
           />
         </div>
-        <Button variant="secondary" className="w-full" onClick={cancel}>
-          Cancel
+        <Button variant="secondary" className="w-full" onClick={cancel} disabled={cancelling}>
+          {cancelling ? 'Cancelling…' : 'Cancel'}
         </Button>
       </div>
     )

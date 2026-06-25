@@ -10,6 +10,7 @@ beforeEach(() => {
     capOverrides: {},
     selectedPath: null,
     phase: 'idle',
+    cancelling: false,
     completed: 0,
     total: 0,
     error: null,
@@ -54,6 +55,35 @@ describe('run lifecycle', () => {
     useStore.getState().endRun(summary)
     expect(useStore.getState().phase).toBe('done')
     expect(useStore.getState().results['/b.jpg'].outcome.kind).toBe('failed')
+  })
+
+  it('requestCancel flags cancelling only while running, and ending the run clears it', () => {
+    const s = () => useStore.getState()
+    s().addInputs([{ path: '/a.jpg', bytes: 1000 }])
+
+    // Before a run starts, a cancel request is a no-op (nothing to cancel).
+    s().requestCancel()
+    expect(s().cancelling).toBe(false)
+
+    s().beginRun()
+    expect(s().cancelling).toBe(false)
+    s().requestCancel()
+    expect(s().cancelling).toBe(true) // instant "Cancelling…" feedback while phase stays 'running'
+    expect(s().phase).toBe('running')
+
+    // Finalizing clears the flag so the next run starts clean.
+    s().endRun({ cancelled: true, results: [compressed('/a.jpg')] })
+    expect(s().cancelling).toBe(false)
+
+    // setError and resetRun also clear it.
+    s().beginRun()
+    s().requestCancel()
+    s().setError('boom')
+    expect(s().cancelling).toBe(false)
+    s().beginRun()
+    s().requestCancel()
+    s().resetRun()
+    expect(s().cancelling).toBe(false)
   })
 
   it('setError marks the run done with a message', () => {
