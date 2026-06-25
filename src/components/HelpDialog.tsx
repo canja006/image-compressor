@@ -14,7 +14,11 @@ const STEPS: ReadonlyArray<Step> = [
   },
   {
     title: 'Set the target size',
-    body: 'Type a cap in KB or MB, or tap a preset — Web (500 KB), Portal (2 MB), Email (10 MB). Switch Per file / Total to cap each image individually or fit the whole set under one combined budget. Under Resize, choose Fit to keep the aspect ratio (optionally capping the longest edge) or Exact to crop-to-fill an exact width × height — the image is scaled and cropped to cover the size with no borders.',
+    body: 'Type a cap in KB or MB, or tap a preset — Web (500 KB), Portal (2 MB), Email (10 MB). Switch Per file / Total to cap each image individually or fit the whole set under one combined budget. In Per file mode you can also give a single image its own cap with the “cap” control on its row.',
+  },
+  {
+    title: 'Choose how it’s resized',
+    body: 'Fit keeps the aspect ratio and can optionally bound the longest edge — no cropping. Exact produces an exact width × height by crop-to-fill: the image is scaled and cropped (anchored start, centre, or end) to cover the box with no borders. In Exact mode the dimensions are locked, so if the cap can’t be met at that resolution the file is reported unreachable rather than quietly shrunk.',
   },
   {
     title: 'Choose a format',
