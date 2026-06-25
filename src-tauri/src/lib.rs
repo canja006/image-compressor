@@ -26,6 +26,7 @@ pub fn run() {
             commands::cancel_batch,
             commands::preview_sample,
             commands::preview_rename,
+            commands::estimate_size,
             commands::thumbnail,
             watcher::start_watch,
             watcher::stop_watch,

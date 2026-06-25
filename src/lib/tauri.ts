@@ -6,7 +6,15 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { BatchItem, BatchSummary, InputFile, Options, Preview, Progress } from './types'
+import type {
+  BatchItem,
+  BatchSummary,
+  InputFile,
+  Options,
+  Preview,
+  Progress,
+  SizeEstimate,
+} from './types'
 
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff']
 
@@ -48,6 +56,13 @@ export async function previewRename(
 ): Promise<string> {
   if (!isTauri()) return pattern
   return invoke<string>('preview_rename', { pattern, stem, width, height, date })
+}
+
+/** Predicted compressed size for one image under the given options (for the file-list readout).
+ *  Lighter than `previewSample` — no encoded image bytes or metrics. Null outside the desktop shell. */
+export async function estimateSize(path: string, options: Options): Promise<SizeEstimate | null> {
+  if (!isTauri()) return null
+  return invoke<SizeEstimate>('estimate_size', { path, options })
 }
 
 /** Small thumbnail (data URL) of an image for the file list, or null if it can't be read. */

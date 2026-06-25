@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { InputFile, FileResult } from '../lib/types'
+import type { InputFile, FileResult, SizeEstimate } from '../lib/types'
 import { useStore, type Phase } from '../store/useStore'
 import { basename, describeOutcome, finalBytesOf } from '../lib/outcome'
 import { formatBytes, parseSizeToBytes, type SizeUnit } from '../lib/format'
@@ -21,6 +21,7 @@ export function FileRow({ input, result, phase, index, onRemove }: FileRowProps)
   const finalBytes = result ? finalBytesOf(result) : null
   const pending = phase === 'running' && !result
   const capMode = useStore((s) => s.settings.capMode)
+  const estimate = useStore((s) => s.estimates[input.path])
   const selectedPath = useStore((s) => s.selectedPath)
   const selectPreview = useStore((s) => s.selectPreview)
   // The previewed row: the explicit selection, or the first row when nothing is selected.
@@ -79,11 +80,13 @@ export function FileRow({ input, result, phase, index, onRemove }: FileRowProps)
 
       <div className="flex items-center gap-2.5 tabular-nums">
         <span className="text-xs text-muted">{formatBytes(input.bytes)}</span>
-        {finalBytes != null && (
+        {finalBytes != null ? (
           <>
             <IconArrowRight size={13} className="text-faint" />
             <span className="text-xs font-medium text-ink">{formatBytes(finalBytes)}</span>
           </>
+        ) : (
+          !result && phase === 'idle' && <EstimatedSize estimate={estimate} />
         )}
       </div>
 
@@ -111,6 +114,33 @@ export function FileRow({ input, result, phase, index, onRemove }: FileRowProps)
       </div>
     </li>
   )
+}
+
+/** Predicted compressed size shown before a run (filled in lazily by `useSizeEstimates`). A `~`
+ *  prefix and muted styling distinguish it from the exact size shown after the run. */
+function EstimatedSize({ estimate }: { estimate: SizeEstimate | undefined }) {
+  if (estimate == null) return null // still computing — it fills in shortly
+  if (estimate.kind === 'compressed' && estimate.finalBytes != null) {
+    return (
+      <>
+        <IconArrowRight size={13} className="text-faint" />
+        <span className="animate-fade-in text-xs text-muted" title="Estimated — run for the exact size">
+          ~{formatBytes(estimate.finalBytes)}
+        </span>
+      </>
+    )
+  }
+  if (estimate.kind === 'unreachable') {
+    return (
+      <span
+        className="animate-fade-in text-[11px] font-medium text-warn"
+        title="The cap can't be reached for this image, even at the smallest size"
+      >
+        cap too small
+      </span>
+    )
+  }
+  return null // failed — the row's detail line already surfaces read errors
 }
 
 function toUnit(bytes: number, unit: SizeUnit): number {

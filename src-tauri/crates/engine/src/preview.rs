@@ -131,6 +131,21 @@ pub fn prepare_source(path: &Path, resize: &ResizeMode) -> Result<PreviewSource,
     })
 }
 
+/// The cap to search the downscaled work copy against, plus how to scale the result back to full
+/// resolution. Returns `(search_cap, ratio, approx)`; `approx` is true when the work copy is smaller
+/// than the intended output (so the byte count is extrapolated). Lossy size scales ~linearly with
+/// pixel count at a fixed quality, so the extrapolation stays close.
+fn extrapolation(source: &PreviewSource, cap_bytes: u64) -> (u64, f64, bool) {
+    let approx = source.work_pixels < source.base_pixels;
+    let ratio = (source.work_pixels as f64) / (source.base_pixels as f64); // in (0, 1]
+    let search_cap = if approx {
+        ((cap_bytes as f64) * ratio).round().max(1.0) as u64
+    } else {
+        cap_bytes
+    };
+    (search_cap, ratio, approx)
+}
+
 /// Run the size search on an already-prepared source. Searches the downscaled copy and extrapolates
 /// the size: lossy size scales ~linearly with pixel count at a fixed quality, so the quality found
 /// matches the full-resolution result and the estimate is close (flagged `approx` when downscaled).
@@ -160,13 +175,7 @@ pub fn preview_from_source(
         bytes: Vec::new(),
     };
 
-    let approx = source.work_pixels < source.base_pixels;
-    let ratio = (source.work_pixels as f64) / (source.base_pixels as f64); // in (0, 1]
-    let search_cap = if approx {
-        ((options.cap_bytes as f64) * ratio).round().max(1.0) as u64
-    } else {
-        options.cap_bytes
-    };
+    let (search_cap, ratio, approx) = extrapolation(source, options.cap_bytes);
 
     // Exact mode locks dimensions, so the preview search must vary quality only (matching the run).
     let allow_downscale = matches!(options.resize, ResizeMode::Fit { .. });
@@ -253,6 +262,82 @@ pub fn preview(path: &Path, options: &Options) -> Preview {
     }
 }
 
+/// A lightweight compressed-size estimate for the file list: the predicted output size without the
+/// display bytes or quality metrics the full [`preview`] produces, so it is cheap to run for every
+/// queued image.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SizeEstimate {
+    /// `"compressed"` | `"unreachable"` | `"failed"`.
+    pub kind: String,
+    /// Predicted output size in bytes (only when `kind == "compressed"`).
+    pub final_bytes: Option<u64>,
+    /// True when the size is extrapolated from a downscaled search (large images) — display as `≈`.
+    pub approx: bool,
+}
+
+impl SizeEstimate {
+    fn compressed(final_bytes: u64, approx: bool) -> Self {
+        Self {
+            kind: "compressed".to_string(),
+            final_bytes: Some(final_bytes),
+            approx,
+        }
+    }
+    fn unreachable() -> Self {
+        Self {
+            kind: "unreachable".to_string(),
+            final_bytes: None,
+            approx: false,
+        }
+    }
+    fn failed() -> Self {
+        Self {
+            kind: "failed".to_string(),
+            final_bytes: None,
+            approx: false,
+        }
+    }
+}
+
+/// Estimate the compressed output size of `path` under `options`, reusing the preview search (decode
+/// once, search a downscaled copy, extrapolate). Honors `skip_if_under_cap` so the estimate matches
+/// what an actual run would write. Cheaper than [`preview`] — no display bytes, no SSIM measurement.
+pub fn estimate_size(path: &Path, options: &Options) -> SizeEstimate {
+    let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    // A file already under its cap is copied as-is by the run, so its output is the original size.
+    if options.skip_if_under_cap && original_bytes > 0 && original_bytes <= options.cap_bytes {
+        return SizeEstimate::compressed(original_bytes, false);
+    }
+    let source = match prepare_source(path, &options.resize) {
+        Ok(s) => s,
+        Err(_) => return SizeEstimate::failed(),
+    };
+    let fmt =
+        resolve_format_with_alpha(options.output_format, source.has_alpha, options.background);
+    let (search_cap, ratio, approx) = extrapolation(&source, options.cap_bytes);
+    let allow_downscale = matches!(options.resize, ResizeMode::Fit { .. });
+    match compress_to_target(
+        &source.work,
+        search_cap,
+        fmt,
+        options,
+        allow_downscale,
+        None,
+    ) {
+        Ok(Some(t)) => {
+            let final_bytes = if approx {
+                ((t.bytes.len() as f64) / ratio).round() as u64
+            } else {
+                t.bytes.len() as u64
+            };
+            SizeEstimate::compressed(final_bytes, approx)
+        }
+        Ok(None) => SizeEstimate::unreachable(),
+        Err(_) => SizeEstimate::failed(),
+    }
+}
+
 /// Decode `path` and return a small JPEG thumbnail (longest edge `max`) for the file list.
 /// Transparent images are flattened onto white for the thumbnail.
 pub fn thumbnail(path: &Path, max: u32) -> Result<Vec<u8>, EngineError> {
@@ -272,4 +357,100 @@ pub fn thumbnail(path: &Path, max: u32) -> Result<Vec<u8>, EngineError> {
         },
         Some(70),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encode::{encode, EncodeFormat};
+    use image::{Rgb, RgbImage};
+
+    /// A smooth-gradient JPEG (compresses well, so a modest cap is reachable) written to disk.
+    fn sample_jpeg(dir: &Path, name: &str, w: u32, h: u32) -> std::path::PathBuf {
+        let mut img = RgbImage::new(w, h);
+        for (x, y, p) in img.enumerate_pixels_mut() {
+            *p = Rgb([(x % 256) as u8, (y % 256) as u8, 128]);
+        }
+        let bytes = encode(
+            &DynamicImage::ImageRgb8(img),
+            EncodeFormat::Jpeg {
+                background: [255, 255, 255],
+            },
+            Some(90),
+        )
+        .expect("encode sample jpeg");
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).expect("write sample jpeg");
+        path
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ic_estimate_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    #[test]
+    fn estimate_compresses_under_a_reachable_cap() {
+        let dir = temp_dir("ok");
+        let f = sample_jpeg(&dir, "a.jpg", 500, 500);
+        let options = Options {
+            cap_bytes: 60 * 1024,
+            skip_if_under_cap: false,
+            ..Options::default()
+        };
+        let est = estimate_size(&f, &options);
+        assert_eq!(est.kind, "compressed");
+        // 500px <= the 720px preview work size, so the estimate is exact and must fit the cap.
+        assert!(!est.approx);
+        assert!(est.final_bytes.expect("size") <= options.cap_bytes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn estimate_reports_unreachable_for_an_impossible_cap() {
+        let dir = temp_dir("un");
+        let f = sample_jpeg(&dir, "a.jpg", 500, 500);
+        let options = Options {
+            cap_bytes: 10,
+            skip_if_under_cap: false,
+            ..Options::default()
+        };
+        assert_eq!(estimate_size(&f, &options).kind, "unreachable");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn estimate_keeps_a_file_already_under_cap() {
+        let dir = temp_dir("skip");
+        let f = sample_jpeg(&dir, "a.jpg", 64, 64);
+        let original = std::fs::metadata(&f).expect("stat").len();
+        let options = Options {
+            cap_bytes: 10 * 1024 * 1024,
+            skip_if_under_cap: true,
+            ..Options::default()
+        };
+        let est = estimate_size(&f, &options);
+        assert_eq!(est.kind, "compressed");
+        assert_eq!(
+            est.final_bytes,
+            Some(original),
+            "an under-cap file is copied as-is, so the estimate is its original size"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn estimate_of_a_corrupt_file_is_failed() {
+        let dir = temp_dir("bad");
+        let f = dir.join("corrupt.png");
+        std::fs::write(&f, b"not a real image").expect("write");
+        let options = Options {
+            skip_if_under_cap: false,
+            ..Options::default()
+        };
+        assert_eq!(estimate_size(&f, &options).kind, "failed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

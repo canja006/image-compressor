@@ -109,3 +109,11 @@ export interface Preview {
   /** Data URL of the compressed result, ready for an `<img src>` (null unless compressed). */
   dataUrl: string | null
 }
+
+/** Lightweight predicted compressed size for a file-list row (the `estimate_size` command). */
+export interface SizeEstimate {
+  kind: 'compressed' | 'unreachable' | 'failed'
+  finalBytes: number | null
+  /** True when the size is extrapolated from a downscaled search (large images). */
+  approx: boolean
+}

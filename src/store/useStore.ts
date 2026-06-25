@@ -9,6 +9,7 @@ import type {
   Options,
   OutputFormat,
   Progress,
+  SizeEstimate,
 } from '../lib/types'
 import { parseSizeToBytes, type SizeUnit } from '../lib/format'
 
@@ -143,6 +144,8 @@ export function buildOptions(s: Settings): Options {
 interface StoreState {
   inputs: InputFile[]
   results: Record<string, FileResult>
+  /** Predicted compressed size per file (pre-run), keyed by path. Filled lazily in the background. */
+  estimates: Record<string, SizeEstimate>
   /** Per-file size-cap overrides in bytes, keyed by path. Absent = use the batch cap. */
   capOverrides: Record<string, number>
   /** Which file the preview shows. `null` falls back to the first input. */
@@ -158,6 +161,8 @@ interface StoreState {
   addInputs: (files: InputFile[]) => void
   removeInput: (path: string) => void
   clearInputs: () => void
+  setEstimate: (path: string, estimate: SizeEstimate) => void
+  clearEstimates: () => void
   selectPreview: (path: string) => void
   setPreviewSource: (dims: { width: number; height: number } | null) => void
   setCapOverride: (path: string, bytes: number | null) => void
@@ -172,6 +177,7 @@ interface StoreState {
 export const useStore = create<StoreState>((set, get) => ({
   inputs: [],
   results: {},
+  estimates: {},
   capOverrides: {},
   selectedPath: null,
   previewSource: null,
@@ -187,8 +193,8 @@ export const useStore = create<StoreState>((set, get) => ({
       const byPath = new Map(state.inputs.map((f) => [f.path, f]))
       for (const f of files) byPath.set(f.path, f)
       const inputs = Array.from(byPath.values()).sort((a, b) => a.path.localeCompare(b.path))
-      // Adding files after a run starts a fresh session.
-      return { inputs, results: {}, phase: 'idle', completed: 0, total: 0, error: null }
+      // Adding files after a run starts a fresh session; estimates recompute for the new set.
+      return { inputs, results: {}, estimates: {}, phase: 'idle', completed: 0, total: 0, error: null }
     }),
 
   removeInput: (path) =>
@@ -198,10 +204,13 @@ export const useStore = create<StoreState>((set, get) => ({
       delete results[path]
       const capOverrides = { ...state.capOverrides }
       delete capOverrides[path]
+      const estimates = { ...state.estimates }
+      delete estimates[path]
       return {
         inputs: state.inputs.filter((f) => f.path !== path),
         results,
         capOverrides,
+        estimates,
         selectedPath: state.selectedPath === path ? null : state.selectedPath,
       }
     }),
@@ -210,6 +219,7 @@ export const useStore = create<StoreState>((set, get) => ({
     set({
       inputs: [],
       results: {},
+      estimates: {},
       capOverrides: {},
       selectedPath: null,
       phase: 'idle',
@@ -217,6 +227,11 @@ export const useStore = create<StoreState>((set, get) => ({
       total: 0,
       error: null,
     }),
+
+  setEstimate: (path, estimate) =>
+    set((state) => ({ estimates: { ...state.estimates, [path]: estimate } })),
+
+  clearEstimates: () => set({ estimates: {} }),
 
   selectPreview: (path) => set({ selectedPath: path }),
 

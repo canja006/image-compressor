@@ -159,6 +159,15 @@ pub fn preview_rename(
     engine::expand_name(&pattern, &ctx)
 }
 
+/// Estimate the compressed output size of a single image under the given options, for the file-list
+/// readout. Cheaper than `preview_sample` (no encoded bytes / metrics). Runs on a blocking worker.
+#[tauri::command]
+pub async fn estimate_size(path: String, options: Options) -> Result<engine::SizeEstimate, String> {
+    tauri::async_runtime::spawn_blocking(move || engine::estimate_size(Path::new(&path), &options))
+        .await
+        .map_err(|e| format!("estimate task failed to join: {e}"))
+}
+
 /// Decode an image and return a small thumbnail as a data URL for the file list (null on failure).
 #[tauri::command]
 pub async fn thumbnail(path: String, max: u32) -> Result<Option<String>, String> {

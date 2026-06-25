@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { isTauri, onFileDrop, pickFiles, pickFolder, scanInputs } from '../lib/tauri'
+import { useSizeEstimates } from '../lib/useSizeEstimates'
 import { formatBytes } from '../lib/format'
 import { Button } from './ui'
 import { cx } from '../lib/cx'
@@ -18,6 +19,9 @@ export function Intake() {
   const [dragActive, setDragActive] = useState(false)
   const [busy, setBusy] = useState(false)
   const running = phase === 'running'
+
+  // Fill each row's predicted compressed size in the background while configuring.
+  useSizeEstimates()
 
   const totalBytes = useMemo(() => inputs.reduce((sum, f) => sum + f.bytes, 0), [inputs])
 
