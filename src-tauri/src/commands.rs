@@ -6,8 +6,10 @@ use base64::Engine as _;
 use engine::{
     BatchItem, BatchSummary, InputFile, Options, Preview, PreviewSource, Progress, ResizeMode,
 };
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 
@@ -159,13 +161,109 @@ pub fn preview_rename(
     engine::expand_name(&pattern, &ctx)
 }
 
-/// Estimate the compressed output size of a single image under the given options, for the file-list
-/// readout. Cheaper than `preview_sample` (no encoded bytes / metrics). Runs on a blocking worker.
+/// Decoded + downscaled sources for the file-list size estimates, keyed by path, so changing only the
+/// cap or format re-searches without re-decoding. `gen` lets a newer pass supersede an in-flight one
+/// (so rapid setting tweaks don't pile up slow AVIF searches). Pruned to the current file set.
+#[derive(Default)]
+pub struct EstimateCache(pub Arc<EstimateCacheInner>);
+
+#[derive(Default)]
+pub struct EstimateCacheInner {
+    sources: Mutex<HashMap<PathBuf, (ResizeMode, Arc<PreviewSource>)>>,
+    gen: AtomicU64,
+}
+
+/// Event channel the file list subscribes to for per-image size estimates as they complete.
+pub const ESTIMATE_EVENT: &str = "estimate-progress";
+
+/// One image's estimate, tagged with the pass `token` so the UI can ignore superseded passes.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EstimateProgress {
+    token: u64,
+    path: String,
+    estimate: engine::SizeEstimate,
+}
+
+/// Fetch the prepared (decoded + downscaled) source for `path`, decoding on a cache miss. Returns
+/// `None` if the image can't be read. The decode happens outside the lock so images decode in
+/// parallel; only the brief map lookup/insert is serialized.
+fn cached_source(
+    cache: &EstimateCacheInner,
+    path: &Path,
+    resize: ResizeMode,
+) -> Option<Arc<PreviewSource>> {
+    if let Ok(map) = cache.sources.lock() {
+        if let Some((cached_resize, source)) = map.get(path) {
+            if *cached_resize == resize {
+                return Some(source.clone());
+            }
+        }
+    }
+    let prepared = engine::prepare_source_with(path, &resize, engine::ESTIMATE_MAX_DIM).ok()?;
+    let arc = Arc::new(prepared);
+    if let Ok(mut map) = cache.sources.lock() {
+        map.insert(path.to_path_buf(), (resize, arc.clone()));
+    }
+    Some(arc)
+}
+
+/// Estimate the compressed size of every queued image in parallel, emitting an `ESTIMATE_EVENT` per
+/// image as it finishes (so rows fill in progressively). Sources are cached, so re-running after a
+/// cap/format change is fast (no re-decode). `token` identifies the pass: a newer call supersedes an
+/// older one, which then stops doing work. Mirrors the per-file cap a real run would use.
 #[tauri::command]
-pub async fn estimate_size(path: String, options: Options) -> Result<engine::SizeEstimate, String> {
-    tauri::async_runtime::spawn_blocking(move || engine::estimate_size(Path::new(&path), &options))
-        .await
-        .map_err(|e| format!("estimate task failed to join: {e}"))
+pub async fn estimate_batch(
+    app: AppHandle,
+    state: State<'_, EstimateCache>,
+    items: Vec<BatchItem>,
+    options: Options,
+    token: u64,
+) -> Result<(), String> {
+    let cache = state.0.clone();
+    cache.gen.store(token, Ordering::Relaxed);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let resize = options.resize;
+        items.par_iter().for_each(|item| {
+            // A newer pass started — abandon this one rather than burn cores on stale work.
+            if cache.gen.load(Ordering::Relaxed) != token {
+                return;
+            }
+            let path = item.path.as_path();
+            let cap = item.cap_override.unwrap_or(options.cap_bytes);
+            let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
+            let estimate =
+                if options.skip_if_under_cap && original_bytes > 0 && original_bytes <= cap {
+                    engine::SizeEstimate::compressed(original_bytes, false)
+                } else {
+                    match cached_source(&cache, path, resize) {
+                        Some(source) => engine::estimate_from_source(&source, &options, cap),
+                        None => engine::SizeEstimate::failed(),
+                    }
+                };
+
+            if cache.gen.load(Ordering::Relaxed) == token {
+                let _ = app.emit(
+                    ESTIMATE_EVENT,
+                    EstimateProgress {
+                        token,
+                        path: path.display().to_string(),
+                        estimate,
+                    },
+                );
+            }
+        });
+
+        // Drop cached sources for files no longer queued, so memory tracks the current batch.
+        let current: HashSet<PathBuf> = items.iter().map(|item| item.path.clone()).collect();
+        if let Ok(mut map) = cache.sources.lock() {
+            map.retain(|cached_path, _| current.contains(cached_path));
+        }
+    })
+    .await
+    .map_err(|e| format!("estimate task failed to join: {e}"))
 }
 
 /// Decode an image and return a small thumbnail as a data URL for the file list (null on failure).

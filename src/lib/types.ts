@@ -110,10 +110,17 @@ export interface Preview {
   dataUrl: string | null
 }
 
-/** Lightweight predicted compressed size for a file-list row (the `estimate_size` command). */
+/** Lightweight predicted compressed size for a file-list row. */
 export interface SizeEstimate {
   kind: 'compressed' | 'unreachable' | 'failed'
   finalBytes: number | null
   /** True when the size is extrapolated from a downscaled search (large images). */
   approx: boolean
+}
+
+/** One image's estimate streamed from the `estimate_batch` command, tagged with its pass token. */
+export interface EstimateProgress {
+  token: number
+  path: string
+  estimate: SizeEstimate
 }

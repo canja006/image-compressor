@@ -83,9 +83,25 @@ pub struct PreviewSource {
 /// extrapolated back to the full resolution, so accuracy holds.
 const PREVIEW_MAX_DIM: u32 = 720;
 
+/// Longest-edge cap for the work copy used by the *file-list* size estimates. Smaller than the
+/// single-image preview: each estimate runs the full search (≈8 encodes — slow for AVIF), and the
+/// list runs one per image, so fewer pixels matter a lot. The result is extrapolated to full size.
+pub const ESTIMATE_MAX_DIM: u32 = 480;
+
 /// Decode `path`, size it per the resize mode, and downscale a working copy for a fast preview
 /// search. The result is cacheable across cap/format changes (only the resize mode invalidates it).
 pub fn prepare_source(path: &Path, resize: &ResizeMode) -> Result<PreviewSource, EngineError> {
+    prepare_source_with(path, resize, PREVIEW_MAX_DIM)
+}
+
+/// Like [`prepare_source`] but with an explicit work-copy longest-edge cap (the size estimates use a
+/// smaller one than the live preview). The search runs on the `work_max_dim`-bounded copy and the
+/// byte count is extrapolated back to the intended output resolution.
+pub fn prepare_source_with(
+    path: &Path,
+    resize: &ResizeMode,
+    work_max_dim: u32,
+) -> Result<PreviewSource, EngineError> {
     let raw = std::fs::read(path).map_err(|e| EngineError::Io {
         path: path.to_path_buf(),
         source: e,
@@ -116,7 +132,7 @@ pub fn prepare_source(path: &Path, resize: &ResizeMode) -> Result<PreviewSource,
     let base_height = base.height();
     let base_pixels = u64::from(base_width) * u64::from(base_height);
 
-    let work = downscale_to_long_edge(&base, PREVIEW_MAX_DIM)?;
+    let work = downscale_to_long_edge(&base, work_max_dim)?;
     let work_pixels = u64::from(work.width()) * u64::from(work.height());
 
     Ok(PreviewSource {
@@ -277,21 +293,24 @@ pub struct SizeEstimate {
 }
 
 impl SizeEstimate {
-    fn compressed(final_bytes: u64, approx: bool) -> Self {
+    /// A file that compresses (or is copied) to `final_bytes`.
+    pub fn compressed(final_bytes: u64, approx: bool) -> Self {
         Self {
             kind: "compressed".to_string(),
             final_bytes: Some(final_bytes),
             approx,
         }
     }
-    fn unreachable() -> Self {
+    /// The cap can't be met for this image even at the smallest size.
+    pub fn unreachable() -> Self {
         Self {
             kind: "unreachable".to_string(),
             final_bytes: None,
             approx: false,
         }
     }
-    fn failed() -> Self {
+    /// The image could not be read or decoded.
+    pub fn failed() -> Self {
         Self {
             kind: "failed".to_string(),
             final_bytes: None,
@@ -300,22 +319,18 @@ impl SizeEstimate {
     }
 }
 
-/// Estimate the compressed output size of `path` under `options`, reusing the preview search (decode
-/// once, search a downscaled copy, extrapolate). Honors `skip_if_under_cap` so the estimate matches
-/// what an actual run would write. Cheaper than [`preview`] — no display bytes, no SSIM measurement.
-pub fn estimate_size(path: &Path, options: &Options) -> SizeEstimate {
-    let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    // A file already under its cap is copied as-is by the run, so its output is the original size.
-    if options.skip_if_under_cap && original_bytes > 0 && original_bytes <= options.cap_bytes {
-        return SizeEstimate::compressed(original_bytes, false);
-    }
-    let source = match prepare_source(path, &options.resize) {
-        Ok(s) => s,
-        Err(_) => return SizeEstimate::failed(),
-    };
+/// Run the size-only search on an already-prepared source against `cap_bytes`: no display bytes, no
+/// SSIM — just the predicted output size. Shared by [`estimate_size`] and the cached batch estimator
+/// (the Tauri layer), so a decoded source can be searched repeatedly as the cap/format change without
+/// re-decoding.
+pub fn estimate_from_source(
+    source: &PreviewSource,
+    options: &Options,
+    cap_bytes: u64,
+) -> SizeEstimate {
     let fmt =
         resolve_format_with_alpha(options.output_format, source.has_alpha, options.background);
-    let (search_cap, ratio, approx) = extrapolation(&source, options.cap_bytes);
+    let (search_cap, ratio, approx) = extrapolation(source, cap_bytes);
     let allow_downscale = matches!(options.resize, ResizeMode::Fit { .. });
     match compress_to_target(
         &source.work,
@@ -334,6 +349,21 @@ pub fn estimate_size(path: &Path, options: &Options) -> SizeEstimate {
             SizeEstimate::compressed(final_bytes, approx)
         }
         Ok(None) => SizeEstimate::unreachable(),
+        Err(_) => SizeEstimate::failed(),
+    }
+}
+
+/// Estimate the compressed output size of `path` under `options` (decode once, search a downscaled
+/// copy, extrapolate). Honors `skip_if_under_cap` so the estimate matches what an actual run would
+/// write. Cheaper than [`preview`] — no display bytes, no SSIM measurement.
+pub fn estimate_size(path: &Path, options: &Options) -> SizeEstimate {
+    let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    // A file already under its cap is copied as-is by the run, so its output is the original size.
+    if options.skip_if_under_cap && original_bytes > 0 && original_bytes <= options.cap_bytes {
+        return SizeEstimate::compressed(original_bytes, false);
+    }
+    match prepare_source_with(path, &options.resize, ESTIMATE_MAX_DIM) {
+        Ok(source) => estimate_from_source(&source, options, options.cap_bytes),
         Err(_) => SizeEstimate::failed(),
     }
 }
@@ -394,7 +424,8 @@ mod tests {
     #[test]
     fn estimate_compresses_under_a_reachable_cap() {
         let dir = temp_dir("ok");
-        let f = sample_jpeg(&dir, "a.jpg", 500, 500);
+        // Smaller than ESTIMATE_MAX_DIM, so the work copy isn't downscaled and the size is exact.
+        let f = sample_jpeg(&dir, "a.jpg", 400, 400);
         let options = Options {
             cap_bytes: 60 * 1024,
             skip_if_under_cap: false,
@@ -402,8 +433,10 @@ mod tests {
         };
         let est = estimate_size(&f, &options);
         assert_eq!(est.kind, "compressed");
-        // 500px <= the 720px preview work size, so the estimate is exact and must fit the cap.
-        assert!(!est.approx);
+        assert!(
+            !est.approx,
+            "a sub-{ESTIMATE_MAX_DIM}px image isn't extrapolated"
+        );
         assert!(est.final_bytes.expect("size") <= options.cap_bytes);
         let _ = std::fs::remove_dir_all(&dir);
     }

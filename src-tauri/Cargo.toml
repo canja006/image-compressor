@@ -23,6 +23,8 @@ tauri-plugin-store = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+# Parallel fan-out for the file-list size estimates (decode/search each image across cores).
+rayon = "1"
 # OS-level filesystem watcher for the watch-folder feature (B1). Pure Rust; the ingest decision logic
 # lives in the engine crate (engine::watch). Default features include the native macOS FSEvents backend.
 notify = "8"

@@ -1861,6 +1861,7 @@ dependencies = [
  "base64 0.22.1",
  "engine",
  "notify",
+ "rayon",
  "serde",
  "serde_json",
  "tauri",

@@ -9,11 +9,11 @@ import { open } from '@tauri-apps/plugin-dialog'
 import type {
   BatchItem,
   BatchSummary,
+  EstimateProgress,
   InputFile,
   Options,
   Preview,
   Progress,
-  SizeEstimate,
 } from './types'
 
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff']
@@ -58,11 +58,24 @@ export async function previewRename(
   return invoke<string>('preview_rename', { pattern, stem, width, height, date })
 }
 
-/** Predicted compressed size for one image under the given options (for the file-list readout).
- *  Lighter than `previewSample` — no encoded image bytes or metrics. Null outside the desktop shell. */
-export async function estimateSize(path: string, options: Options): Promise<SizeEstimate | null> {
-  if (!isTauri()) return null
-  return invoke<SizeEstimate>('estimate_size', { path, options })
+/** Estimate the compressed size of many images in parallel (for the file-list readout). Results
+ *  arrive via `onEstimateProgress` events tagged with `token`; the promise resolves when the pass is
+ *  done. Sources are cached backend-side, so re-running after a cap/format change avoids re-decoding. */
+export async function estimateBatch(
+  items: BatchItem[],
+  options: Options,
+  token: number,
+): Promise<void> {
+  if (!isTauri()) return
+  await invoke('estimate_batch', { items, options, token })
+}
+
+/** Subscribe to per-image size estimates as they complete. Returns an unlisten function. */
+export async function onEstimateProgress(
+  handler: (p: EstimateProgress) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {}
+  return listen<EstimateProgress>('estimate-progress', (event) => handler(event.payload))
 }
 
 /** Small thumbnail (data URL) of an image for the file list, or null if it can't be read. */

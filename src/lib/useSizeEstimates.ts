@@ -1,18 +1,19 @@
 import { useEffect, useRef } from 'react'
 import { buildOptions, useStore } from '../store/useStore'
-import { estimateSize, isTauri } from './tauri'
+import { estimateBatch, isTauri, onEstimateProgress } from './tauri'
 import { splitBudget } from './budget'
 import { parseSizeToBytes } from './format'
-import type { Options } from './types'
+import type { BatchItem } from './types'
 
 /**
- * Fills each queued image's predicted compressed size into the store, one by one, while idle — so
- * the file list can show a before/after size before any run. The per-file cap matches exactly what a
- * real run would use (budget split in total-budget mode, otherwise the per-file override or the batch
- * cap), so the estimate lines up with the result.
+ * Fills each queued image's predicted compressed size into the store so the file list can show a
+ * before/after size before any run. Work happens on the backend in parallel (across cores) with the
+ * decoded sources cached, so re-estimating after a cap/format tweak is fast; results stream back per
+ * image and overwrite in place (no flicker). The per-file cap matches exactly what a real run would
+ * use (budget split in total-budget mode, otherwise the override or batch cap).
  *
- * Recomputes (debounced) whenever a size-affecting setting, a cap override, or the file set changes;
- * a generation token aborts an in-flight pass cleanly when that happens.
+ * Each pass carries a monotonic `token`; a newer pass supersedes the previous one (the backend stops
+ * the stale pass, and any late events for an old token are ignored here).
  */
 export function useSizeEstimates() {
   // Subscribe to the inputs that affect estimates so the signature below recomputes on change.
@@ -20,7 +21,7 @@ export function useSizeEstimates() {
   const settings = useStore((s) => s.settings)
   const capOverrides = useStore((s) => s.capOverrides)
   const phase = useStore((s) => s.phase)
-  const gen = useRef(0)
+  const token = useRef(0)
 
   // A signature of everything an estimate depends on; when it changes, the effect re-runs.
   const signature = JSON.stringify({
@@ -34,36 +35,44 @@ export function useSizeEstimates() {
 
   useEffect(() => {
     if (!isTauri() || phase !== 'idle') return
-    // Read the current values fresh so the effect's only reactive deps are `signature` + `phase`.
-    const { inputs, settings, capOverrides, setEstimate, clearEstimates } = useStore.getState()
+    const { inputs, settings, capOverrides, setEstimate } = useStore.getState()
     if (inputs.length === 0) return
 
-    const myGen = ++gen.current
-    clearEstimates()
-
-    const base = buildOptions(settings)
-    const perFileCap =
-      settings.capMode === 'totalBudget'
-        ? splitBudget(inputs, parseSizeToBytes(settings.capValue, settings.capUnit))
-        : capOverrides
-
+    const myToken = ++token.current
+    let unlisten = () => {}
     let cancelled = false
+
+    // Small debounce so dragging a slider doesn't fire a pass per frame.
     const timer = setTimeout(async () => {
-      for (const file of inputs) {
-        if (cancelled || gen.current !== myGen) return
-        const options: Options = { ...base, capBytes: perFileCap[file.path] ?? base.capBytes }
-        try {
-          const estimate = await estimateSize(file.path, options)
-          if (!cancelled && gen.current === myGen && estimate) setEstimate(file.path, estimate)
-        } catch {
-          // Leave this row without an estimate; the next pass (or the real run) will fill it.
+      if (cancelled) return
+      const options = buildOptions(settings)
+      const perFileCap =
+        settings.capMode === 'totalBudget'
+          ? splitBudget(inputs, parseSizeToBytes(settings.capValue, settings.capUnit))
+          : capOverrides
+      const items: BatchItem[] = inputs.map((f) => ({
+        path: f.path,
+        capOverride: perFileCap[f.path] ?? null,
+      }))
+
+      try {
+        unlisten = await onEstimateProgress((p) => {
+          if (!cancelled && p.token === myToken) setEstimate(p.path, p.estimate)
+        })
+        if (cancelled) {
+          unlisten()
+          return
         }
+        await estimateBatch(items, options, myToken)
+      } catch {
+        // Leave rows with their last estimate; the next pass (or the real run) refreshes them.
       }
-    }, 350)
+    }, 250)
 
     return () => {
       cancelled = true
       clearTimeout(timer)
+      unlisten()
     }
     // `signature` already encodes inputs/settings/capOverrides; `phase` gates to the idle state.
   }, [signature, phase])

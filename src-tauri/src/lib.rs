@@ -19,6 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(CancelState::default())
         .manage(commands::PreviewCache::default())
+        .manage(commands::EstimateCache::default())
         .manage(watcher::WatchState::default())
         .invoke_handler(tauri::generate_handler![
             commands::scan_inputs,
@@ -26,7 +27,7 @@ pub fn run() {
             commands::cancel_batch,
             commands::preview_sample,
             commands::preview_rename,
-            commands::estimate_size,
+            commands::estimate_batch,
             commands::thumbnail,
             watcher::start_watch,
             watcher::stop_watch,

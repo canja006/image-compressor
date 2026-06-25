@@ -30,8 +30,8 @@ pub use model::{
     Outcome, OutputFormat, Progress, ResizeMode,
 };
 pub use preview::{
-    estimate_size, prepare_source, preview, preview_from_source, thumbnail, Preview, PreviewSource,
-    SizeEstimate,
+    estimate_from_source, estimate_size, prepare_source, prepare_source_with, preview,
+    preview_from_source, thumbnail, Preview, PreviewSource, SizeEstimate, ESTIMATE_MAX_DIM,
 };
 pub use rename::{expand_name, NameContext};
 pub use target::{compress_to_target, TargetResult};
