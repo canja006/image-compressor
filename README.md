@@ -22,6 +22,19 @@ A standalone Windows + macOS desktop app that compresses and resizes images to h
 - Result summary per file: original → final size, % saved, final quality/dimensions, and any failures
 - Built-in help panel, light / dark themes, keyboard-operable, AA contrast
 
+## Installing the downloaded app (first launch)
+
+The released installers are **not code-signed or notarized**, so the first time you open the app, macOS Gatekeeper (or Windows SmartScreen) shows a warning. This is expected for an unsigned build downloaded from the internet — it doesn't indicate a problem with the app, and it's a one-time step per install.
+
+**macOS** — this only happens for the *downloaded* app; a build you compile locally is never quarantined. After dragging the app into Applications, either:
+
+- **Terminal:** run `xattr -dr com.apple.quarantine "/Applications/Image Compressor.app"`, then open it normally; or
+- **System Settings:** open the app once (the warning appears), then go to **System Settings → Privacy & Security**, scroll to the Security section, and click **Open Anyway** next to the Image Compressor message, then confirm. (On macOS 15+ the old right-click → Open shortcut no longer bypasses this.)
+
+**Windows** — if SmartScreen shows *"Windows protected your PC"*, click **More info → Run anyway**.
+
+To remove the warning entirely, the maintainer can enable code signing + notarization — see [Building installers](#building-installers-windows--macos).
+
 ## How the target-size algorithm works
 
 Each image is decoded once and (optionally) downscaled to a max long edge. The encoder quality is then **binary-searched** for the largest file that still fits the cap. If even the lowest quality is over the cap, the dimensions are downscaled (by a factor derived from the size overshoot, clamped) and the search retries. If the longest edge falls below a 16 px floor and the cap still can't be met, the file is marked **unreachable**. All search happens in memory: each source is decoded once and written once.
