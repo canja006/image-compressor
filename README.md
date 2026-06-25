@@ -49,9 +49,14 @@ The compression engine is a **separate workspace crate** (`src-tauri/crates/engi
 │   ├── crates/engine/         # pure-Rust target-size engine (no Tauri deps)
 │   ├── capabilities/          # scoped permissions
 │   └── tauri.conf.json
-├── .github/workflows/release.yml   # dual-OS installer build
+├── design/                    # original brief: spec, roadmap, build-agent prompt
+├── docs/                      # README assets (screenshot)
+├── .github/workflows/         # release.yml (dual-OS installers) + ci.yml (verify gate)
 └── package.json
 ```
+
+> The original design brief — the algorithm spec, the phase roadmap (with status), and the
+> build-agent prompt — lives in [`design/`](design/). This README reflects the app as it ships today.
 
 ## Prerequisites
 
