@@ -31,6 +31,10 @@ pub struct Preview {
     pub approx: bool,
     pub mime: Option<String>,
     pub error: Option<String>,
+    /// SSIM and PSNR (dB) of the previewed output vs the source pixels — the B6 quality readout.
+    /// `None` when not computable (e.g. AVIF, which has no pure-Rust decoder for measurement).
+    pub ssim: Option<f64>,
+    pub psnr: Option<f64>,
     /// Encoded preview bytes (only when `kind == "compressed"`). Skipped in serialization — the
     /// command base64-encodes these into a data URL for the webview instead of sending raw bytes.
     #[serde(skip)]
@@ -53,6 +57,8 @@ impl Preview {
             approx: false,
             mime: None,
             error: Some(error),
+            ssim: None,
+            psnr: None,
             bytes: Vec::new(),
         }
     }
@@ -149,6 +155,8 @@ pub fn preview_from_source(
         approx: false,
         mime: None,
         error: None,
+        ssim: None,
+        psnr: None,
         bytes: Vec::new(),
     };
 
@@ -162,8 +170,19 @@ pub fn preview_from_source(
 
     // Exact mode locks dimensions, so the preview search must vary quality only (matching the run).
     let allow_downscale = matches!(options.resize, ResizeMode::Fit { .. });
-    match compress_to_target(&source.work, search_cap, fmt, options, allow_downscale) {
+    match compress_to_target(
+        &source.work,
+        search_cap,
+        fmt,
+        options,
+        allow_downscale,
+        None,
+    ) {
         Ok(Some(t)) => {
+            // B6 readout: measure the previewed result against the (downscaled) source pixels.
+            let (ssim_v, psnr_v) = measure_preview(&source.work, &t.bytes);
+            p.ssim = ssim_v;
+            p.psnr = psnr_v;
             let final_bytes = if approx {
                 ((t.bytes.len() as f64) / ratio).round() as u64
             } else {
@@ -206,6 +225,23 @@ pub fn preview_from_source(
         Err(e) => return Preview::failed(original_bytes, e.to_string()),
     }
     p
+}
+
+/// SSIM/PSNR of an encoded preview buffer against the source pixels, or `(None, None)` when the
+/// buffer can't be decoded (e.g. AVIF) or dimensions mismatch.
+fn measure_preview(work: &DynamicImage, encoded: &[u8]) -> (Option<f64>, Option<f64>) {
+    let Ok(decoded) = decode(encoded) else {
+        return (None, None);
+    };
+    let a = work.to_rgb8();
+    let b = decoded.to_rgb8();
+    if a.dimensions() != b.dimensions() {
+        return (None, None);
+    }
+    (
+        Some(crate::metrics::ssim(&a, &b)),
+        Some(crate::metrics::psnr(&a, &b)),
+    )
 }
 
 /// Compress one image entirely in memory and return the result plus its encoded bytes.

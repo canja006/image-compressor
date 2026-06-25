@@ -17,6 +17,9 @@ pub struct TargetResult {
     pub width: u32,
     pub height: u32,
     pub downscaled: bool,
+    /// SSIM of the chosen output vs the source pixels, computed only when a perceptual floor is set
+    /// (and the format is decodable for measurement). `None` otherwise.
+    pub ssim: Option<f64>,
 }
 
 /// Returns `Ok(Some(result))` with the largest file that still fits `cap_bytes`, `Ok(None)` if the
@@ -27,12 +30,20 @@ pub struct TargetResult {
 /// shrinks dimensions to meet the cap. In exact-size mode it is `false` — dimensions are locked to
 /// the caller's target, only quality varies, and a cap that cannot be met at those dimensions is
 /// reported `Unreachable` rather than silently delivering a smaller image.
+/// `quality_hint` is an optional warm start from a previous similar image in the batch: the search
+/// probes it first to narrow the binary-search range (a pure speedup — the result is still optimal).
+///
+/// `opts.perceptual_floor` (SSIM) adds a fidelity guard: if the cap-fitting result scores below the
+/// floor and dimensions are not locked, the search trades resolution (downscales a step) to recover
+/// fidelity rather than ship a visually-poor image. The floor applies to decodable lossy formats
+/// (JPEG); lossless PNG is exact, and AVIF cannot be decoded for measurement so the floor is skipped.
 pub fn compress_to_target(
     img: &DynamicImage,
     cap_bytes: u64,
     fmt: EncodeFormat,
     opts: &Options,
     allow_downscale: bool,
+    quality_hint: Option<u8>,
 ) -> Result<Option<TargetResult>, EngineError> {
     let range = fmt.quality_range(opts);
     let q_lo = range.map(|(lo, _)| lo);
@@ -73,13 +84,27 @@ pub fn compress_to_target(
                 width: w,
                 height: h,
                 downscaled: factor < 1.0,
+                ssim: None,
             }));
         };
 
-        // Binary-search the quality upward for the largest file still within the cap.
+        // Binary-search the quality upward for the largest file still within the cap. An optional
+        // warm-start hint replaces the first probe to shrink the range when batch images are similar.
         let mut best_q = lo;
         let mut best_bytes = smallest;
         let (mut low, mut high) = (lo + 1, hi);
+        if let Some(hq) = quality_hint {
+            if hq > lo && hq <= hi {
+                let candidate = encode(&work, fmt, Some(hq))?;
+                if candidate.len() as u64 <= cap_bytes {
+                    best_q = hq;
+                    best_bytes = candidate;
+                    low = hq + 1;
+                } else {
+                    high = hq - 1;
+                }
+            }
+        }
         while low <= high {
             let mid = low + (high - low) / 2;
             let candidate = encode(&work, fmt, Some(mid))?;
@@ -92,13 +117,55 @@ pub fn compress_to_target(
             }
         }
 
+        // Perceptual floor: if the result is below the SSIM threshold, trade resolution for fidelity
+        // (fit mode only). Measured only for decodable formats; AVIF/None leave the floor unenforced.
+        let mut ssim_val = None;
+        if let Some(floor) = opts.perceptual_floor {
+            ssim_val = ssim_of(&work, &best_bytes);
+            if let Some(sv) = ssim_val {
+                if sv < floor && allow_downscale && w.max(h) > opts.min_long_edge {
+                    factor = floor_shrink(factor, w.max(h), opts.min_long_edge);
+                    continue;
+                }
+            }
+        }
+
         return Ok(Some(TargetResult {
             bytes: best_bytes,
             quality: Some(best_q),
             width: w,
             height: h,
             downscaled: factor < 1.0,
+            ssim: ssim_val,
         }));
+    }
+}
+
+/// SSIM of an encoded buffer against the source pixels, or `None` if the buffer can't be decoded
+/// (e.g. AVIF, for which no pure-Rust decoder is wired) or dimensions mismatch.
+fn ssim_of(work: &DynamicImage, encoded: &[u8]) -> Option<f64> {
+    let decoded = crate::decode::decode(encoded).ok()?;
+    let a = work.to_rgb8();
+    let b = decoded.to_rgb8();
+    if a.dimensions() != b.dimensions() {
+        return None;
+    }
+    Some(crate::metrics::ssim(&a, &b))
+}
+
+/// Shrink the cumulative scale factor one step for the perceptual-floor downscale, never jumping
+/// below the dimension floor and always making progress (terminates the loop).
+fn floor_shrink(factor: f64, long: u32, floor_edge: u32) -> f64 {
+    let projected = (f64::from(long) * 0.85).round() as u32;
+    let next = if projected < floor_edge {
+        factor * (f64::from(floor_edge) / f64::from(long))
+    } else {
+        factor * 0.85
+    };
+    if next >= factor {
+        factor * 0.85
+    } else {
+        next
     }
 }
 
@@ -162,7 +229,7 @@ mod tests {
             .len() as u64;
         let cap = (lo + hi) / 2;
 
-        let res = compress_to_target(&img, cap, jpeg(), &opts, true)
+        let res = compress_to_target(&img, cap, jpeg(), &opts, true, None)
             .unwrap()
             .expect("cap should be reachable");
         assert!(
@@ -186,7 +253,7 @@ mod tests {
         // A midpoint cap forces an interior solution (no downscale, q below max).
         let cap = (lo + hi) / 2;
 
-        let res = compress_to_target(&img, cap, jpeg(), &opts, true)
+        let res = compress_to_target(&img, cap, jpeg(), &opts, true, None)
             .unwrap()
             .expect("cap should be reachable");
         let q = res.quality.expect("jpeg result has a quality");
@@ -219,7 +286,7 @@ mod tests {
             .len() as u64;
         let cap = full_min / 4;
 
-        let res = compress_to_target(&img, cap, jpeg(), &opts, true)
+        let res = compress_to_target(&img, cap, jpeg(), &opts, true, None)
             .unwrap()
             .expect("cap should be reachable via downscale");
         assert!(res.downscaled, "expected dimension downscaling");
@@ -239,7 +306,7 @@ mod tests {
         let img = test_image(1024, 1024);
         let opts = Options::default();
         // 10 bytes is smaller than any real JPEG header — unreachable at any size.
-        let res = compress_to_target(&img, 10, jpeg(), &opts, true).unwrap();
+        let res = compress_to_target(&img, 10, jpeg(), &opts, true, None).unwrap();
         assert!(
             res.is_none(),
             "an impossible cap must be Unreachable, not a panic or a fit"
@@ -251,7 +318,7 @@ mod tests {
         let img = test_image(256, 256);
         let opts = Options::default();
         let big_cap = encode(&img, EncodeFormat::Png, None).unwrap().len() as u64 + 1;
-        let res = compress_to_target(&img, big_cap, EncodeFormat::Png, &opts, true)
+        let res = compress_to_target(&img, big_cap, EncodeFormat::Png, &opts, true, None)
             .unwrap()
             .expect("png under a generous cap is reachable");
         assert_eq!(res.quality, None);
@@ -269,12 +336,12 @@ mod tests {
             .len() as u64
             / 4;
 
-        let fit = compress_to_target(&img, cap, jpeg(), &opts, true)
+        let fit = compress_to_target(&img, cap, jpeg(), &opts, true, None)
             .unwrap()
             .expect("fit mode reaches the cap by downscaling");
         assert!(fit.downscaled, "fit mode should have downscaled");
 
-        let locked = compress_to_target(&img, cap, jpeg(), &opts, false).unwrap();
+        let locked = compress_to_target(&img, cap, jpeg(), &opts, false, None).unwrap();
         assert!(
             locked.is_none(),
             "locked dimensions must be unreachable, not a downscaled fit"
@@ -291,11 +358,59 @@ mod tests {
             .len() as u64;
         let cap = hi + 1; // comfortably reachable at full quality
 
-        let res = compress_to_target(&img, cap, jpeg(), &opts, false)
+        let res = compress_to_target(&img, cap, jpeg(), &opts, false, None)
             .unwrap()
             .expect("reachable cap at locked dimensions");
         assert!(!res.downscaled, "locked dimensions never downscale");
         assert_eq!((res.width, res.height), (512, 512));
         assert!(res.bytes.len() as u64 <= cap);
+    }
+
+    #[test]
+    fn perceptual_floor_trades_resolution_for_fidelity() {
+        // A detailed (high-frequency) image whose low-quality full-res JPEG scores poorly on SSIM.
+        let img = test_image(1024, 1024);
+        let base = Options::default();
+        let lo_bytes = encode(&img, jpeg(), Some(base.jpeg_quality_min))
+            .unwrap()
+            .len() as u64;
+        // A cap just above the smallest full-res encode: reachable at full resolution, but only at
+        // low quality (low fidelity).
+        let cap = lo_bytes + lo_bytes / 10;
+
+        // Without a floor, the cap is met at full resolution (no downscale).
+        let no_floor = compress_to_target(&img, cap, jpeg(), &base, true, None)
+            .unwrap()
+            .expect("reachable without a floor");
+        assert!(
+            !no_floor.downscaled,
+            "without a floor the cap is met at full resolution"
+        );
+        assert!(
+            no_floor.ssim.is_none(),
+            "ssim only computed when a floor is set"
+        );
+
+        // A high floor forces the search to downscale to recover fidelity.
+        let opts = Options {
+            perceptual_floor: Some(0.99),
+            ..Options::default()
+        };
+        let floored = compress_to_target(&img, cap, jpeg(), &opts, true, None)
+            .unwrap()
+            .expect("still reachable with a floor (best-effort at the dimension floor)");
+        assert!(
+            floored.downscaled,
+            "a high perceptual floor should trade resolution for fidelity"
+        );
+        assert!(floored.ssim.is_some(), "floor runs compute an SSIM");
+        assert!(
+            floored.width < no_floor.width || floored.height < no_floor.height,
+            "floored output should be smaller in at least one dimension"
+        );
+        assert!(
+            floored.bytes.len() as u64 <= cap,
+            "floor never breaks the cap"
+        );
     }
 }

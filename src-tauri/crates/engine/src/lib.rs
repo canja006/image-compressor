@@ -11,6 +11,7 @@ pub mod decode;
 pub mod encode;
 pub mod error;
 pub mod metadata;
+pub mod metrics;
 pub mod model;
 pub mod naming;
 pub mod preview;

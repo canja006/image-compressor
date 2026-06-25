@@ -123,6 +123,12 @@ pub struct Options {
     /// on the web. Off by default. `#[serde(default)]` for forward-compat.
     #[serde(default)]
     pub convert_srgb: bool,
+    /// Optional perceptual-quality floor (SSIM in 0.0..=1.0). When set, the size search will not
+    /// settle for output below this structural-similarity threshold: in fit mode it trades
+    /// resolution (downscales) to stay above the floor rather than dropping quality further. `None`
+    /// disables the floor (today's behavior). `#[serde(default)]` for forward-compat.
+    #[serde(default)]
+    pub perceptual_floor: Option<f64>,
 }
 
 impl Default for Options {
@@ -142,6 +148,7 @@ impl Default for Options {
             background: [255, 255, 255],
             metadata: MetadataMode::StripAll,
             convert_srgb: false,
+            perceptual_floor: None,
         }
     }
 }

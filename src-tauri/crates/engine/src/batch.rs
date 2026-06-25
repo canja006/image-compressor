@@ -16,7 +16,7 @@ use image::DynamicImage;
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 
 /// File extensions the engine will attempt to decode.
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "tif", "tiff"];
@@ -80,6 +80,10 @@ pub fn compress_batch(
 ) -> crate::model::BatchSummary {
     let total = items.len();
     let completed = AtomicUsize::new(0);
+    // Warm-start hint shared across the batch: the last successful JPEG quality (0 = none). Similar
+    // images converge to similar quality, so seeding the binary search narrows it. Relaxed races are
+    // harmless — it only ever shrinks the search range; the result stays optimal regardless.
+    let quality_hint = AtomicU16::new(0);
 
     let results: Vec<FileResult> = items
         .par_iter()
@@ -94,7 +98,7 @@ pub fn compress_batch(
                     outcome: Outcome::Cancelled,
                 }
             } else {
-                process_one(path, options, cap)
+                process_one(path, options, cap, &quality_hint)
             };
             let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
             on_progress(Progress {
@@ -115,7 +119,7 @@ pub fn compress_batch(
 /// Compress a single file end to end against an effective `cap` (the per-file override or the
 /// batch default). Every failure mode is captured in the returned `FileResult`; this function does
 /// not return `Result` because a bad file is a normal outcome.
-fn process_one(path: &Path, options: &Options, cap: u64) -> FileResult {
+fn process_one(path: &Path, options: &Options, cap: u64, quality_hint: &AtomicU16) -> FileResult {
     let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let mut result = FileResult {
         input: path.to_path_buf(),
@@ -221,8 +225,16 @@ fn process_one(path: &Path, options: &Options, cap: u64) -> FileResult {
         };
     let effective_cap = cap.saturating_sub(metadata_reserve);
 
-    match compress_to_target(&base, effective_cap, fmt, options, allow_downscale) {
+    let hint = match quality_hint.load(Ordering::Relaxed) {
+        0 => None,
+        q => u8::try_from(q).ok(),
+    };
+    match compress_to_target(&base, effective_cap, fmt, options, allow_downscale, hint) {
         Ok(Some(target)) => {
+            // Feed this file's quality back as the warm-start hint for the next similar image.
+            if let Some(q) = target.quality {
+                quality_hint.store(u16::from(q), Ordering::Relaxed);
+            }
             // Re-embed metadata per mode (passthrough for StripAll), then write the muxed bytes.
             let final_bytes =
                 crate::metadata::mux_metadata(target.bytes, &meta, options, fmt.extension());
