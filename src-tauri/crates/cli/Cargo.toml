@@ -1,0 +1,21 @@
+# Headless CLI (B3). Depends on the pure-Rust `engine` crate only — never on the Tauri app — so the
+# same compression code paths back both the GUI and scripting/CI use. `clap` is permissively licensed.
+[package]
+name = "imgc"
+version = "0.4.0"
+description = "Headless image compressor — compress images to a target file-size cap from the terminal."
+authors = ["Antti Jakunaho"]
+edition = "2021"
+rust-version = "1.77"
+
+[[bin]]
+name = "imgc"
+path = "src/main.rs"
+
+[dependencies]
+engine = { path = "../engine" }
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+# Used only by the integration test to synthesize a sample image on disk.
+image = "0.25"
