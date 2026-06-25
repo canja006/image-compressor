@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Image Compressor",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "identifier": "com.anttijakunaho.imagecompressor",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run sidecar:dev && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run sidecar && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -29,6 +29,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/imgc"],
     "category": "Utility",
     "shortDescription": "Compress images to a target file size.",
     "longDescription": "Compress and resize images to hit a target file-size cap (KB/MB), single or batch. Fast, offline, pure-Rust engine.",

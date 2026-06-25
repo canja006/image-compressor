@@ -7,6 +7,8 @@ coverage
 # rust / tauri
 src-tauri/target
 src-tauri/gen/schemas
+# imgc sidecar binaries, staged at build time by scripts/build-sidecar.mjs (not committed)
+src-tauri/binaries/
 # logs
 *.log
 npm-debug.log*

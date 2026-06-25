@@ -82,6 +82,22 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # The macOS installer is a universal binary, so its bundled `imgc` sidecar must be universal too.
+      # Build imgc for both arches and lipo them into the exact name Tauri expects for a universal build
+      # (`-universal-apple-darwin`). Windows and local builds stage the host-triple sidecar instead, via
+      # the beforeBuildCommand (`npm run sidecar`) in tauri.conf.json.
+      - name: Stage imgc sidecar (macOS universal)
+        if: matrix.platform == 'macos-latest'
+        working-directory: src-tauri
+        run: |
+          cargo build -p imgc --release --features mozjpeg --target aarch64-apple-darwin
+          cargo build -p imgc --release --features mozjpeg --target x86_64-apple-darwin
+          mkdir -p binaries
+          lipo -create -output binaries/imgc-universal-apple-darwin \
+            target/aarch64-apple-darwin/release/imgc \
+            target/x86_64-apple-darwin/release/imgc
+          lipo -info binaries/imgc-universal-apple-darwin
+
       - name: Build the app and upload to the release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
