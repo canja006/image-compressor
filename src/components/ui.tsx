@@ -1,6 +1,7 @@
 // Small, consistent UI primitives shared across the app. Kept deliberately flat: 1px borders,
 // near-zero shadows, crisp 6-12px radii, motion only on transform/opacity/color.
 
+import { useEffect, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { cx } from '../lib/cx'
 
@@ -144,6 +145,34 @@ export function NumberField({
   ariaLabel,
   className,
 }: NumberFieldProps) {
+  // A local draft so the field can be emptied or hold an intermediate value while typing. Valid
+  // numbers propagate live; clamping to [min, max] (and reverting an empty box) happens only on blur
+  // — coercing on every keystroke is what made an empty field snap straight back to the minimum.
+  const [text, setText] = useState(() => (Number.isFinite(value) ? String(value) : ''))
+  const textRef = useRef(text)
+  textRef.current = text
+
+  // Adopt the value when it changes from outside (e.g. a preset) — but never clobber the draft the
+  // user is actively typing (their text already parses to the current value).
+  useEffect(() => {
+    if (Number.parseFloat(textRef.current) !== value) {
+      setText(Number.isFinite(value) ? String(value) : '')
+    }
+  }, [value])
+
+  const commit = () => {
+    const next = Number.parseFloat(text)
+    if (Number.isNaN(next)) {
+      setText(Number.isFinite(value) ? String(value) : '')
+      return
+    }
+    let clamped = next
+    if (min !== undefined) clamped = Math.max(min, clamped)
+    if (max !== undefined) clamped = Math.min(max, clamped)
+    if (clamped !== value) onChange(clamped)
+    setText(String(clamped))
+  }
+
   return (
     <div
       className={cx(
@@ -157,22 +186,17 @@ export function NumberField({
         type="number"
         inputMode="numeric"
         aria-label={ariaLabel}
-        value={Number.isFinite(value) ? value : ''}
+        value={text}
         min={min}
         max={max}
         step={step}
         disabled={disabled}
         onChange={(e) => {
+          setText(e.target.value)
           const next = Number.parseFloat(e.target.value)
-          if (Number.isNaN(next)) {
-            onChange(min ?? 0)
-            return
-          }
-          let clamped = next
-          if (min !== undefined) clamped = Math.max(min, clamped)
-          if (max !== undefined) clamped = Math.min(max, clamped)
-          onChange(clamped)
+          if (!Number.isNaN(next)) onChange(next)
         }}
+        onBlur={commit}
         className="w-full bg-transparent px-3 py-2 text-sm tabular-nums text-ink outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
       />
       {suffix != null && (

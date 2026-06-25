@@ -136,7 +136,7 @@ function CapOverrideControl({ path }: { path: string }) {
     return (
       <div className="flex items-center gap-1">
         <NumberField
-          className="w-[68px]"
+          className="w-[96px]"
           value={value}
           min={1}
           suffix={unit}
