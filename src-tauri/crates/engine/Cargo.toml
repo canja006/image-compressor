@@ -1,6 +1,6 @@
 [package]
 name = "engine"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "Pure-Rust target-size image compression engine (no Tauri/OS-specific code)."
 license = "MIT"
