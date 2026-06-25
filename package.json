@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "sidecar": "node scripts/build-sidecar.mjs --mozjpeg --force",
+    "sidecar": "node scripts/build-sidecar.mjs --mozjpeg",
     "sidecar:dev": "node scripts/build-sidecar.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
