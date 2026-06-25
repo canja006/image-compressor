@@ -139,6 +139,26 @@ pub async fn preview_sample(
     })
 }
 
+/// Expand a rename pattern with sample values for the live preview in Settings. The real batch uses
+/// the same `engine::expand_name`, so this is a single source of truth (no duplicated JS logic).
+#[tauri::command]
+pub fn preview_rename(
+    pattern: String,
+    stem: String,
+    width: u32,
+    height: u32,
+    date: String,
+) -> String {
+    let ctx = engine::NameContext {
+        stem: &stem,
+        seq: 1,
+        width,
+        height,
+        date: &date,
+    };
+    engine::expand_name(&pattern, &ctx)
+}
+
 /// Decode an image and return a small thumbnail as a data URL for the file list (null on failure).
 #[tauri::command]
 pub async fn thumbnail(path: String, max: u32) -> Result<Option<String>, String> {

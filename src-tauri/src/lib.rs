@@ -23,6 +23,7 @@ pub fn run() {
             commands::compress_batch,
             commands::cancel_batch,
             commands::preview_sample,
+            commands::preview_rename,
             commands::thumbnail,
         ])
         .run(tauri::generate_context!());

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Intake } from './components/Intake'
+import { Presets } from './components/Presets'
 import { PresetBar } from './components/PresetBar'
 import { CapControls } from './components/CapControls'
 import { Settings } from './components/Settings'
@@ -108,6 +109,9 @@ export default function App() {
         </div>
 
         <aside className="flex flex-col gap-4 md:min-h-0 md:overflow-y-auto md:pr-1">
+          <Panel className="p-4">
+            <Presets />
+          </Panel>
           <Panel className="space-y-5 p-4">
             <PresetBar />
             <CapControls />

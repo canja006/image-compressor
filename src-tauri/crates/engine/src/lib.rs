@@ -15,6 +15,7 @@ pub mod metrics;
 pub mod model;
 pub mod naming;
 pub mod preview;
+pub mod rename;
 pub mod resize;
 pub mod target;
 
@@ -30,4 +31,5 @@ pub use model::{
 pub use preview::{
     prepare_source, preview, preview_from_source, thumbnail, Preview, PreviewSource,
 };
+pub use rename::{expand_name, NameContext};
 pub use target::{compress_to_target, TargetResult};

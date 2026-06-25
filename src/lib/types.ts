@@ -37,6 +37,9 @@ export interface Options {
   /** Optional SSIM floor (0.0–1.0): the search won't ship below this fidelity, trading resolution
    *  instead. `null` disables it. */
   perceptualFloor: number | null
+  /** Optional output-name pattern with tokens ({name}, {seq:000}, {date}, {w}, {h}). `null` keeps
+   *  the default stem + suffix naming. */
+  renamePattern: string | null
 }
 
 export type Outcome =

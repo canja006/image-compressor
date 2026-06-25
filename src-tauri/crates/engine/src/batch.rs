@@ -9,7 +9,7 @@ use crate::model::{
     BatchItem, FileResult, InputFile, MetadataMode, Options, Outcome, OutputFormat, Progress,
     ResizeMode,
 };
-use crate::naming::{resolve_output_path, Resolved};
+use crate::naming::{output_base_name, resolve_output_path_with_base, NameInfo, Resolved};
 use crate::resize::downscale_to_long_edge;
 use crate::target::compress_to_target;
 use image::DynamicImage;
@@ -84,10 +84,13 @@ pub fn compress_batch(
     // images converge to similar quality, so seeding the binary search narrows it. Relaxed races are
     // harmless — it only ever shrinks the search range; the result stays optimal regardless.
     let quality_hint = AtomicU16::new(0);
+    // One date stamp for the whole batch, for the `{date}` rename token.
+    let date = today_ymd();
 
     let results: Vec<FileResult> = items
         .par_iter()
-        .map(|item| {
+        .enumerate()
+        .map(|(idx, item)| {
             let path = item.path.as_path();
             let cap = item.cap_override.unwrap_or(options.cap_bytes);
             let result = if cancel.load(Ordering::Relaxed) {
@@ -98,7 +101,7 @@ pub fn compress_batch(
                     outcome: Outcome::Cancelled,
                 }
             } else {
-                process_one(path, options, cap, &quality_hint)
+                process_one(path, options, cap, &quality_hint, idx + 1, &date)
             };
             let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
             on_progress(Progress {
@@ -119,7 +122,14 @@ pub fn compress_batch(
 /// Compress a single file end to end against an effective `cap` (the per-file override or the
 /// batch default). Every failure mode is captured in the returned `FileResult`; this function does
 /// not return `Result` because a bad file is a normal outcome.
-fn process_one(path: &Path, options: &Options, cap: u64, quality_hint: &AtomicU16) -> FileResult {
+fn process_one(
+    path: &Path,
+    options: &Options,
+    cap: u64,
+    quality_hint: &AtomicU16,
+    seq: usize,
+    date: &str,
+) -> FileResult {
     let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let mut result = FileResult {
         input: path.to_path_buf(),
@@ -132,7 +142,7 @@ fn process_one(path: &Path, options: &Options, cap: u64, quality_hint: &AtomicU1
 
     // Already under the cap: copy as-is rather than re-encode (configurable).
     if options.skip_if_under_cap && original_bytes <= cap && original_bytes > 0 {
-        match copy_as_is(path, options) {
+        match copy_as_is(path, options, seq, date) {
             Ok(Some(out)) => {
                 result.output = Some(out);
                 result.outcome = Outcome::SkippedUnderCap {
@@ -238,7 +248,14 @@ fn process_one(path: &Path, options: &Options, cap: u64, quality_hint: &AtomicU1
             // Re-embed metadata per mode (passthrough for StripAll), then write the muxed bytes.
             let final_bytes =
                 crate::metadata::mux_metadata(target.bytes, &meta, options, fmt.extension());
-            match resolve_output_path(path, options, fmt.extension()) {
+            let info = NameInfo {
+                seq,
+                width: target.width,
+                height: target.height,
+                date,
+            };
+            let base = output_base_name(path, options, &info);
+            match resolve_output_path_with_base(path, options, fmt.extension(), &base) {
                 Resolved::Path(out) => match std::fs::write(&out, &final_bytes) {
                     Ok(()) => {
                         result.output = Some(out);
@@ -310,10 +327,28 @@ pub(crate) fn resolve_format_with_alpha(
 }
 
 /// Copy a source that is already under the cap to its resolved output path, keeping the original
-/// extension. Returns the destination, or `None` if a `Skip` collision policy declined it.
-fn copy_as_is(path: &Path, options: &Options) -> Result<Option<PathBuf>, EngineError> {
+/// extension. Returns the destination, or `None` if a `Skip` collision policy declined it. Honors a
+/// rename pattern; `{w}`/`{h}` come from a cheap header read since the copy isn't decoded otherwise.
+fn copy_as_is(
+    path: &Path,
+    options: &Options,
+    seq: usize,
+    date: &str,
+) -> Result<Option<PathBuf>, EngineError> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("img");
-    match resolve_output_path(path, options, ext) {
+    let (width, height) = if options.rename_pattern.is_some() {
+        image::image_dimensions(path).unwrap_or((0, 0))
+    } else {
+        (0, 0)
+    };
+    let info = NameInfo {
+        seq,
+        width,
+        height,
+        date,
+    };
+    let base = output_base_name(path, options, &info);
+    match resolve_output_path_with_base(path, options, ext, &base) {
         Resolved::Path(out) => {
             if out == path {
                 return Ok(Some(out)); // output would be the source itself; nothing to copy
@@ -326,6 +361,33 @@ fn copy_as_is(path: &Path, options: &Options) -> Result<Option<PathBuf>, EngineE
         }
         Resolved::SkipCollision => Ok(None),
     }
+}
+
+/// Current UTC date as `YYYY-MM-DD` for the `{date}` rename token. Falls back to the epoch on a clock
+/// error. Pure date math — no `chrono` dependency.
+fn today_ymd() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, m, d) = ymd_from_days((secs / 86_400) as i64);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Civil (year, month, day) from a day count since 1970-01-01 (Howard Hinnant's `civil_from_days`).
+fn ymd_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m as u32, d as u32)
 }
 
 #[cfg(test)]
@@ -533,6 +595,42 @@ mod tests {
         assert!(
             found.iter().any(|f| f.path == img),
             "the real image should be found"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn civil_date_from_days_is_correct() {
+        assert_eq!(ymd_from_days(0), (1970, 1, 1));
+        assert_eq!(ymd_from_days(31), (1970, 2, 1));
+        assert_eq!(ymd_from_days(59), (1970, 3, 1)); // 1970 is not a leap year
+        assert_eq!(ymd_from_days(365), (1971, 1, 1));
+    }
+
+    #[test]
+    fn rename_pattern_drives_the_output_filename() {
+        let dir = std::env::temp_dir().join(format!("ic_rename_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = write_test_jpeg(&dir, "original.jpg", 320, 240);
+
+        let options = Options {
+            cap_bytes: 5_000_000,
+            skip_if_under_cap: false,
+            collision: CollisionPolicy::Overwrite,
+            output_dir: Some(dir.clone()),
+            rename_pattern: Some("{name}-{seq:000}-{w}x{h}".to_string()),
+            ..Options::default()
+        };
+        let cancel = AtomicBool::new(false);
+        let summary = compress_batch(&[BatchItem::new(f)], &options, &cancel, &|_p| {});
+
+        let out = summary.results[0].output.as_ref().expect("an output path");
+        let stem = out.file_stem().and_then(|s| s.to_str()).unwrap();
+        // seq is 1 (single file); dimensions are the encoded 320x240.
+        assert_eq!(
+            stem, "original-001-320x240",
+            "the rename pattern should drive the output name"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

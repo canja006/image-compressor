@@ -50,6 +50,8 @@ export interface Settings {
   perceptualFloorPct: number
   /** Show the SSIM/PSNR readout in the preview (B6). UI-only — not sent to the engine. */
   showMetrics: boolean
+  /** Output-name pattern with tokens (empty = default stem + suffix naming). */
+  renamePattern: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -76,6 +78,7 @@ export const DEFAULT_SETTINGS: Settings = {
   perceptualFloorEnabled: false,
   perceptualFloorPct: 90,
   showMetrics: false,
+  renamePattern: '',
 }
 
 const SETTINGS_KEY = 'image-compressor.settings'
@@ -133,6 +136,7 @@ export function buildOptions(s: Settings): Options {
     perceptualFloor: s.perceptualFloorEnabled
       ? Math.min(1, Math.max(0, s.perceptualFloorPct / 100))
       : null,
+    renamePattern: s.renamePattern.trim() ? s.renamePattern : null,
   }
 }
 

@@ -129,6 +129,10 @@ pub struct Options {
     /// disables the floor (today's behavior). `#[serde(default)]` for forward-compat.
     #[serde(default)]
     pub perceptual_floor: Option<f64>,
+    /// Optional output-name pattern with tokens (`{name}`, `{seq:000}`, `{date}`, `{w}`, `{h}`).
+    /// `None` keeps the default `stem + suffix` naming. `#[serde(default)]` for forward-compat.
+    #[serde(default)]
+    pub rename_pattern: Option<String>,
 }
 
 impl Default for Options {
@@ -149,6 +153,7 @@ impl Default for Options {
             metadata: MetadataMode::StripAll,
             convert_srgb: false,
             perceptual_floor: None,
+            rename_pattern: None,
         }
     }
 }

@@ -38,6 +38,18 @@ export async function previewSample(path: string, options: Options): Promise<Pre
   return invoke<Preview>('preview_sample', { path, options })
 }
 
+/** Expand a rename pattern with sample values for the live preview (engine is the source of truth). */
+export async function previewRename(
+  pattern: string,
+  stem: string,
+  width: number,
+  height: number,
+  date: string,
+): Promise<string> {
+  if (!isTauri()) return pattern
+  return invoke<string>('preview_rename', { pattern, stem, width, height, date })
+}
+
 /** Small thumbnail (data URL) of an image for the file list, or null if it can't be read. */
 export async function getThumbnail(path: string, max: number): Promise<string | null> {
   if (!isTauri()) return null

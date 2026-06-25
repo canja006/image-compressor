@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
-import { pickOutputDir } from '../lib/tauri'
+import { pickOutputDir, previewRename } from '../lib/tauri'
 import type { CollisionPolicy, MetadataMode } from '../lib/types'
 import { basename } from '../lib/outcome'
 import { hexToRgb, rgbToHex } from '../lib/color'
@@ -9,6 +9,60 @@ import { cx } from '../lib/cx'
 import { IconChevron } from '../lib/icons'
 
 const BACKGROUND_SWATCHES = ['#ffffff', '#000000', '#f7f6f3'] as const
+
+/** Output-naming pattern input with a live preview of the expanded name (B7). The expansion is done
+ *  by the engine via a Tauri command, so the GUI and the real run never diverge. */
+function RenameField() {
+  const pattern = useStore((s) => s.settings.renamePattern)
+  const update = useStore((s) => s.updateSettings)
+  const firstInput = useStore((s) => s.inputs[0])
+  const previewSource = useStore((s) => s.previewSource)
+  const running = useStore((s) => s.phase === 'running')
+  const [sample, setSample] = useState('')
+
+  useEffect(() => {
+    if (!pattern.trim()) {
+      setSample('')
+      return
+    }
+    const stem = firstInput ? basename(firstInput.path).replace(/\.[^.]+$/, '') : 'photo'
+    const width = previewSource?.width ?? 1920
+    const height = previewSource?.height ?? 1080
+    const date = new Date().toISOString().slice(0, 10)
+    let cancelled = false
+    const timer = setTimeout(() => {
+      previewRename(pattern, stem, width, height, date)
+        .then((name) => !cancelled && setSample(name))
+        .catch(() => !cancelled && setSample(''))
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [pattern, firstInput, previewSource])
+
+  return (
+    <Field
+      label="Output naming"
+      hint="Tokens: {name} {seq:000} {date} {w} {h}. Empty uses the filename + suffix above."
+    >
+      <input
+        type="text"
+        value={pattern}
+        disabled={running}
+        placeholder="{name}-{seq:000}"
+        onChange={(e) => update({ renamePattern: e.target.value })}
+        aria-label="Output naming pattern"
+        className="w-full rounded-md border border-line bg-surface px-3 py-2 font-mono text-xs text-ink outline-none transition-colors focus:border-line-strong"
+      />
+      {sample !== '' && (
+        <p className="font-mono text-[11px] text-faint">
+          Example: <span className="text-muted">{sample}</span>
+        </p>
+      )}
+    </Field>
+  )
+}
 
 export function Settings() {
   const [open, setOpen] = useState(false)
@@ -240,6 +294,8 @@ export function Settings() {
                 onChange={(showMetrics) => update({ showMetrics })}
               />
             </div>
+
+            <RenameField />
           </div>
         </div>
       )}
