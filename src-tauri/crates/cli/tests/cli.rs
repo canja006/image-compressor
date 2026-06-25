@@ -37,6 +37,7 @@ fn compresses_a_folder_to_a_cap_headlessly() {
 
     let cap_bytes: u64 = 80 * 1024;
     let status = Command::new(env!("CARGO_BIN_EXE_imgc"))
+        .arg("compress")
         .arg(&src)
         .args(["--cap", "80k", "--format", "jpeg", "--quiet"])
         .arg("--out")
@@ -72,6 +73,7 @@ fn an_impossible_cap_exits_non_zero() {
 
     // 10 bytes is impossible for any real JPEG, so the file is Unreachable and the run must fail.
     let status = Command::new(env!("CARGO_BIN_EXE_imgc"))
+        .arg("compress")
         .arg(&src)
         .args(["--cap", "10", "--force-recompress", "--quiet"])
         .arg("--out")
@@ -91,6 +93,7 @@ fn no_images_in_inputs_exits_non_zero() {
     std::fs::write(src.join("notes.txt"), b"not an image").expect("write txt");
 
     let status = Command::new(env!("CARGO_BIN_EXE_imgc"))
+        .arg("compress")
         .arg(&src)
         .args(["--cap", "500k", "--quiet"])
         .status()
@@ -101,4 +104,35 @@ fn no_images_in_inputs_exits_non_zero() {
     );
 
     let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn shell_print_windows_emits_registry_entries() {
+    let output = Command::new(env!("CARGO_BIN_EXE_imgc"))
+        .args([
+            "shell", "print", "--target", "windows", "--cap", "2mb", "--format", "jpeg",
+        ])
+        .output()
+        .expect("run imgc shell print");
+    assert!(output.status.success(), "shell print should exit success");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Windows Registry Editor Version 5.00"));
+    assert!(
+        stdout.contains("SystemFileAssociations\\.jpg\\shell\\ImageCompressorCompress"),
+        "the .jpg verb key must be present"
+    );
+    assert!(stdout.contains("compress --cap 2mb --format jpeg"));
+}
+
+#[test]
+fn shell_print_macos_emits_a_quick_action() {
+    let output = Command::new(env!("CARGO_BIN_EXE_imgc"))
+        .args(["shell", "print", "--target", "macos"])
+        .output()
+        .expect("run imgc shell print");
+    assert!(output.status.success(), "shell print should exit success");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("com.apple.Automator.servicesMenu"));
+    assert!(stdout.contains("Run Shell Script.action"));
+    assert!(stdout.contains("compress --cap 500k --format keep"));
 }

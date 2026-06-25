@@ -1,12 +1,20 @@
 //! `imgc` — the headless image compressor. Depends on the pure-Rust `engine` crate only (never the
-//! Tauri app), so the GUI and the CLI share one compression implementation. Reads files/folders,
-//! compresses each to a per-file byte cap, and exits non-zero if any file failed or was unreachable.
+//! Tauri app), so the GUI and the CLI share one compression implementation.
+//!
+//! Subcommands:
+//! - `imgc compress [opts] <inputs>…` — compress files/folders to a per-file byte cap; exits non-zero
+//!   if any file failed or was unreachable.
+//! - `imgc shell {install,uninstall,print}` — manage the OS right-click "Compress with…" integration,
+//!   which itself just runs `imgc compress`.
 
-use clap::{Parser, ValueEnum};
+mod shell;
+
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use engine::{
     compress_batch, scan_inputs, Anchor, BatchItem, CollisionPolicy, MetadataMode, Options,
     Outcome, OutputFormat, Progress, ResizeMode,
 };
+use shell::ShellConfig;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
@@ -18,6 +26,20 @@ use std::sync::atomic::AtomicBool;
     about = "Compress images to a target file size."
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Compress image files/folders to a per-file size cap.
+    Compress(CompressArgs),
+    /// Manage the OS right-click "Compress with Image Compressor" integration.
+    Shell(ShellArgs),
+}
+
+#[derive(Args)]
+struct CompressArgs {
     /// One or more image files or folders (folders are walked recursively).
     #[arg(required = true)]
     inputs: Vec<PathBuf>,
@@ -89,6 +111,53 @@ struct Cli {
     /// Suppress the per-file progress lines (the final summary still prints).
     #[arg(long)]
     quiet: bool,
+}
+
+#[derive(Args)]
+struct ShellArgs {
+    /// What to do.
+    action: ShellAction,
+
+    /// Which OS integration to target (default: this OS).
+    #[arg(long, default_value = "auto")]
+    target: TargetArg,
+
+    /// Size cap baked into the menu command (passed to `imgc compress --cap`).
+    #[arg(long, default_value = "500k")]
+    cap: String,
+
+    /// Output format baked into the menu command.
+    #[arg(long, default_value = "keep")]
+    format: String,
+
+    /// Output folder baked into the menu command (default: next to each source).
+    #[arg(long)]
+    out: Option<String>,
+
+    /// Override the macOS Services directory (mainly for testing).
+    #[arg(long)]
+    services_dir: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ShellAction {
+    Install,
+    Uninstall,
+    Print,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum TargetArg {
+    Auto,
+    Macos,
+    Windows,
+}
+
+/// The resolved OS target for shell integration.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    MacOs,
+    Windows,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -246,9 +315,7 @@ fn describe(outcome: &Outcome) -> String {
     }
 }
 
-fn main() -> ExitCode {
-    let cli = Cli::parse();
-
+fn run_compress(cli: CompressArgs) -> ExitCode {
     let perceptual_floor = match cli.floor {
         Some(pct) => {
             if !(50..=100).contains(&pct) {
@@ -341,5 +408,198 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// The OS this binary is running on, if it is one we integrate with.
+fn current_target() -> Option<Target> {
+    if cfg!(target_os = "macos") {
+        Some(Target::MacOs)
+    } else if cfg!(target_os = "windows") {
+        Some(Target::Windows)
+    } else {
+        None
+    }
+}
+
+/// The default macOS Quick Action directory: `$HOME/Library/Services`.
+fn default_services_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Services"))
+}
+
+/// Write `body` to a temp `.reg` file and apply it with `reg import` (Windows only).
+fn apply_reg(body: &str, label: &str) -> ExitCode {
+    let path = std::env::temp_dir().join(format!("imgc_{label}.reg"));
+    if let Err(e) = std::fs::write(&path, body) {
+        eprintln!("could not write {}: {e}", path.display());
+        return ExitCode::FAILURE;
+    }
+    match std::process::Command::new("reg")
+        .arg("import")
+        .arg(&path)
+        .status()
+    {
+        Ok(status) if status.success() => {
+            println!("Applied registry changes from {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Ok(status) => {
+            eprintln!("`reg import` exited with {status}");
+            ExitCode::FAILURE
+        }
+        Err(e) => {
+            eprintln!("could not run `reg import` (Windows only): {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_shell(cli: ShellArgs) -> ExitCode {
+    // The menu command runs this very binary, so resolve its absolute path.
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("could not resolve the imgc executable path: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = parse_size(&cli.cap) {
+        eprintln!("--cap: {e}");
+        return ExitCode::FAILURE;
+    }
+    let cfg = ShellConfig {
+        exe: &exe,
+        cap: &cli.cap,
+        format: &cli.format,
+        out: cli.out.as_deref(),
+    };
+
+    let target = match cli.target {
+        TargetArg::Macos => Target::MacOs,
+        TargetArg::Windows => Target::Windows,
+        TargetArg::Auto => match current_target() {
+            Some(t) => t,
+            None => {
+                eprintln!("shell integration is available on macOS and Windows only");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+
+    match cli.action {
+        ShellAction::Print => {
+            match target {
+                Target::Windows => print!("{}", shell::windows_reg(&cfg, true)),
+                Target::MacOs => {
+                    println!(
+                        "# One-line command the Quick Action runs (paste into Automator if you"
+                    );
+                    println!("# prefer to create the Service manually):");
+                    println!("{}", cfg.macos_command());
+                    println!("\n# Contents/Info.plist:\n{}", shell::macos_info_plist());
+                    println!("# Contents/document.wflow:\n{}", shell::macos_wflow(&cfg));
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        ShellAction::Install => install(&cfg, target, cli.services_dir.as_deref()),
+        ShellAction::Uninstall => uninstall(&cfg, target, cli.services_dir.as_deref()),
+    }
+}
+
+fn install(cfg: &ShellConfig, target: Target, services_dir: Option<&Path>) -> ExitCode {
+    match target {
+        Target::MacOs => {
+            if !cfg!(target_os = "macos") {
+                eprintln!(
+                    "the macOS Quick Action can only be installed on macOS; run \
+                     `imgc shell print --target macos` to get the files"
+                );
+                return ExitCode::FAILURE;
+            }
+            let dir = match services_dir
+                .map(Path::to_path_buf)
+                .or_else(default_services_dir)
+            {
+                Some(d) => d,
+                None => {
+                    eprintln!("could not determine the Services directory (HOME unset)");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match shell::install_macos(&dir, cfg) {
+                Ok(bundle) => {
+                    println!("Installed Quick Action: {}", bundle.display());
+                    println!(
+                        "If it doesn't appear, enable it under System Settings → Keyboard → \
+                         Keyboard Shortcuts → Services (Files and Folders)."
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("could not install the Quick Action: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Target::Windows => {
+            if !cfg!(target_os = "windows") {
+                eprintln!(
+                    "the Windows registry entries can only be applied on Windows; run \
+                     `imgc shell print --target windows > install.reg` and import it there"
+                );
+                return ExitCode::FAILURE;
+            }
+            apply_reg(&shell::windows_reg(cfg, true), "install")
+        }
+    }
+}
+
+fn uninstall(cfg: &ShellConfig, target: Target, services_dir: Option<&Path>) -> ExitCode {
+    match target {
+        Target::MacOs => {
+            if !cfg!(target_os = "macos") {
+                eprintln!("the macOS Quick Action can only be removed on macOS");
+                return ExitCode::FAILURE;
+            }
+            let dir = match services_dir
+                .map(Path::to_path_buf)
+                .or_else(default_services_dir)
+            {
+                Some(d) => d,
+                None => {
+                    eprintln!("could not determine the Services directory (HOME unset)");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match shell::uninstall_macos(&dir) {
+                Ok(true) => {
+                    println!("Removed the Quick Action.");
+                    ExitCode::SUCCESS
+                }
+                Ok(false) => {
+                    println!("No Quick Action was installed.");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("could not remove the Quick Action: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Target::Windows => {
+            if !cfg!(target_os = "windows") {
+                eprintln!("the Windows registry entries can only be removed on Windows");
+                return ExitCode::FAILURE;
+            }
+            apply_reg(&shell::windows_reg(cfg, false), "uninstall")
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    match Cli::parse().command {
+        Command::Compress(args) => run_compress(args),
+        Command::Shell(args) => run_shell(args),
     }
 }

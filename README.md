@@ -20,6 +20,12 @@ A standalone Windows + macOS desktop app that compresses and resizes images to h
 - **Cancel** mid-run with accurate partial results
 - **Per-file isolation:** a corrupt or unreachable file is recorded with a reason and the batch continues — it never aborts the job or panics
 - Result summary per file: original → final size, % saved, final quality/dimensions, and any failures
+- **Presets & delivery profiles** — save the current recipe as a named preset, or pick a built-in one (MLS listing, Web hero AVIF, Client gallery budget)
+- **Bulk rename** with tokens (`{name} {seq:000} {date} {w} {h}`) and a live preview
+- **Metadata control** (strip all / keep ICC / no GPS) and optional **sRGB conversion**; EXIF orientation is always baked into the pixels
+- Optional **perceptual quality floor** (won't ship below a target SSIM — trades resolution to stay sharp) and a **SSIM / PSNR** readout in the preview
+- **Watch folder** — auto-compress every image dropped into a folder with the current preset, writing to a separate output folder (never re-ingests its own output)
+- **Command line (`imgc`) and OS right-click integration** — see [CLI & shell integration](docs/cli-and-shell-integration.md)
 - Built-in help panel, light / dark themes, keyboard-operable, AA contrast
 
 ## Installing the downloaded app (first launch)
@@ -43,6 +49,23 @@ When a cap is reachable the output is **always ≤ the cap**, and the search ret
 
 In Exact mode, crop-to-fill computes the crop in source space then resizes once; dimensions are locked so the quality search alone meets the cap, and an unmeetable cap at the exact size is reported unreachable (never silently shrunk).
 
+## Command line & right-click integration
+
+A headless CLI, **`imgc`**, ships alongside the app for scripting and CI. It lives in its own
+workspace crate (`src-tauri/crates/cli`) that depends on the **engine crate only — never on Tauri** —
+so the GUI and CLI share one compression implementation:
+
+```bash
+cd src-tauri && cargo build --release -p imgc
+imgc compress ~/Photos --cap 800k --format jpeg --max-dimension 2048
+imgc shell install        # adds the "Compress with Image Compressor" right-click menu
+```
+
+`imgc shell {install,uninstall,print}` wires up a macOS Finder **Quick Action** or Windows Explorer
+context-menu entry that hands the selected images to `imgc compress`. Full flag reference, the macOS
+manual-setup fallback, and the Windows `.reg` details are in
+[docs/cli-and-shell-integration.md](docs/cli-and-shell-integration.md).
+
 ## Tech stack
 
 - **Tauri 2** — Rust core; WebView2 on Windows, WKWebView on macOS
@@ -61,8 +84,9 @@ The compression engine is a **separate workspace crate** (`src-tauri/crates/engi
 │   ├── lib/                   # tauri bridge, types, format helpers, icons, theme
 │   └── store/                 # Zustand store
 ├── src-tauri/                 # Tauri app
-│   ├── src/                   # commands.rs, lib.rs (thin bridge to the engine)
+│   ├── src/                   # commands.rs, watcher.rs, lib.rs (thin bridge to the engine)
 │   ├── crates/engine/         # pure-Rust target-size engine (no Tauri deps)
+│   ├── crates/cli/            # `imgc` headless CLI + right-click integration (engine-only)
 │   ├── capabilities/          # scoped permissions
 │   └── tauri.conf.json
 ├── design/                    # original brief: spec, roadmap, build-agent prompt
