@@ -84,7 +84,11 @@ pub fn prepare_source(path: &Path, resize: &ResizeMode) -> Result<PreviewSource,
         path: path.to_path_buf(),
         source: e,
     })?;
+    let meta = crate::metadata::read_source_meta(&raw);
     let img = decode(&raw)?;
+    // Bake EXIF orientation so the preview and its reported source dimensions are upright. sRGB is
+    // not applied here: the source is cached by path + resize mode only, not the full options.
+    let img = crate::metadata::apply_color_and_orientation(img, &meta, &Options::default());
     let source_width = img.width();
     let source_height = img.height();
     let has_alpha = img.color().has_alpha();
@@ -220,7 +224,10 @@ pub fn thumbnail(path: &Path, max: u32) -> Result<Vec<u8>, EngineError> {
         path: path.to_path_buf(),
         source: e,
     })?;
+    let meta = crate::metadata::read_source_meta(&raw);
     let img = decode(&raw)?;
+    // Bake EXIF orientation so thumbnails aren't shown sideways.
+    let img = crate::metadata::apply_color_and_orientation(img, &meta, &Options::default());
     let small = downscale_to_long_edge(&img, max.max(16))?;
     encode(
         &small,

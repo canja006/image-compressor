@@ -58,6 +58,25 @@ impl Default for ResizeMode {
     }
 }
 
+/// How EXIF and color metadata are handled when writing output. EXIF orientation is always baked
+/// into the pixels (so every output is visually upright) independent of this setting; this only
+/// controls what metadata is re-embedded into the encoded file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MetadataMode {
+    /// Drop all EXIF/metadata (smallest, most private). The default — matches today's behavior.
+    #[default]
+    StripAll,
+    /// Re-embed the source ICC profile and EXIF. (Phase 1 re-embeds the ICC profile; full EXIF
+    /// re-embedding is deferred.)
+    KeepAll,
+    /// Re-embed the source ICC profile only; orientation is preserved via the baked-in pixels.
+    KeepOrientationIcc,
+    /// Re-embed the ICC profile but strip EXIF GPS. (Phase 1 strips all EXIF to guarantee GPS is
+    /// gone; selective GPS-only removal is deferred.)
+    StripGps,
+}
+
 /// What to do when the computed output path already exists on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -96,6 +115,14 @@ pub struct Options {
     pub min_long_edge: u32,
     /// Background used to flatten alpha when encoding an image with transparency to JPEG.
     pub background: [u8; 3],
+    /// How EXIF/metadata is handled on output. `#[serde(default)]` so older frontends that omit the
+    /// field still deserialize. Defaults to `StripAll` (today's behavior).
+    #[serde(default)]
+    pub metadata: MetadataMode,
+    /// Convert pixels to sRGB (using the source ICC profile) before encoding, for consistent color
+    /// on the web. Off by default. `#[serde(default)]` for forward-compat.
+    #[serde(default)]
+    pub convert_srgb: bool,
 }
 
 impl Default for Options {
@@ -113,6 +140,8 @@ impl Default for Options {
             jpeg_quality_max: 95,
             min_long_edge: 16,
             background: [255, 255, 255],
+            metadata: MetadataMode::StripAll,
+            convert_srgb: false,
         }
     }
 }

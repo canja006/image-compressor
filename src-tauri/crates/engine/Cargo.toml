@@ -32,11 +32,19 @@ ravif = { version = "0.11", default-features = false, features = ["threading"] }
 rgb = "0.8"
 # Pure-Rust lossless PNG optimizer (no C deps with these features).
 oxipng = { version = "9", default-features = false, features = ["parallel", "zopfli"] }
+# EXIF read (orientation + GPS detection). Pure Rust, BSD-2-Clause.
+kamadak-exif = "0.6"
+# Read/write ICC + EXIF on JPEG/PNG containers without re-encoding pixels. Pure Rust, MIT/Apache-2.0.
+img-parts = "0.3"
+# Pure-Rust color management for ICC -> sRGB conversion. Apache-2.0/BSD-3-Clause.
+moxcms = "0.8"
 # Optional: enabled only by the `mozjpeg` feature above (build-time C + NASM, statically linked).
 mozjpeg = { version = "0.10", optional = true }
 
 [dev-dependencies]
 # Integration tests (tests/) are a separate crate, so they need `image` and `serde_json`
-# declared here to build test images and exercise the serde boundary.
+# declared here to build test images and exercise the serde boundary. `img-parts` is used to embed
+# and read back an ICC profile in the metadata round-trip test.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff"] }
 serde_json = "1"
+img-parts = "0.3"

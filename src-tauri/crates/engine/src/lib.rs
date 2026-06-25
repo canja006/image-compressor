@@ -10,6 +10,7 @@ pub mod crop;
 pub mod decode;
 pub mod encode;
 pub mod error;
+pub mod metadata;
 pub mod model;
 pub mod naming;
 pub mod preview;
@@ -20,9 +21,10 @@ pub use batch::{compress_batch, is_supported, scan_inputs, SUPPORTED_EXTENSIONS}
 pub use crop::{cover_crop_rect, cover_crop_resize, CropRect};
 pub use encode::EncodeFormat;
 pub use error::EngineError;
+pub use metadata::{apply_color_and_orientation, mux_metadata, read_source_meta, SourceMeta};
 pub use model::{
-    Anchor, BatchItem, BatchSummary, CollisionPolicy, FileResult, InputFile, Options, Outcome,
-    OutputFormat, Progress, ResizeMode,
+    Anchor, BatchItem, BatchSummary, CollisionPolicy, FileResult, InputFile, MetadataMode, Options,
+    Outcome, OutputFormat, Progress, ResizeMode,
 };
 pub use preview::{
     prepare_source, preview, preview_from_source, thumbnail, Preview, PreviewSource,

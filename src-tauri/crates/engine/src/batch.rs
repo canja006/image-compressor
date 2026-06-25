@@ -6,7 +6,8 @@ use crate::decode::decode;
 use crate::encode::EncodeFormat;
 use crate::error::EngineError;
 use crate::model::{
-    BatchItem, FileResult, InputFile, Options, Outcome, OutputFormat, Progress, ResizeMode,
+    BatchItem, FileResult, InputFile, MetadataMode, Options, Outcome, OutputFormat, Progress,
+    ResizeMode,
 };
 use crate::naming::{resolve_output_path, Resolved};
 use crate::resize::downscale_to_long_edge;
@@ -153,6 +154,9 @@ fn process_one(path: &Path, options: &Options, cap: u64) -> FileResult {
             return result;
         }
     };
+    // Read EXIF/ICC from the original bytes before they are dropped; used to bake orientation, run
+    // the optional sRGB conversion, and (for keep modes) re-embed the ICC profile after encoding.
+    let meta = crate::metadata::read_source_meta(&bytes);
     let img = match decode(&bytes) {
         Ok(i) => i,
         Err(e) => {
@@ -163,6 +167,8 @@ fn process_one(path: &Path, options: &Options, cap: u64) -> FileResult {
         }
     };
     drop(bytes);
+    // Bake EXIF orientation into the pixels (every output is upright) and optionally convert to sRGB.
+    let img = crate::metadata::apply_color_and_orientation(img, &meta, options);
 
     let fmt = resolve_format(options.output_format, &img, options.background);
 
@@ -201,27 +207,46 @@ fn process_one(path: &Path, options: &Options, cap: u64) -> FileResult {
         },
     };
 
-    match compress_to_target(&base, cap, fmt, options, allow_downscale) {
-        Ok(Some(target)) => match resolve_output_path(path, options, fmt.extension()) {
-            Resolved::Path(out) => match std::fs::write(&out, &target.bytes) {
-                Ok(()) => {
-                    result.output = Some(out);
-                    result.outcome = Outcome::Compressed {
-                        final_bytes: target.bytes.len() as u64,
-                        quality: target.quality,
-                        width: target.width,
-                        height: target.height,
-                        downscaled: target.downscaled,
-                    };
-                }
-                Err(e) => {
-                    result.outcome = Outcome::Failed {
-                        reason: format!("write: {e}"),
-                    };
-                }
-            },
-            Resolved::SkipCollision => result.outcome = Outcome::SkippedCollision,
-        },
+    // Reserve room for any re-embedded ICC profile so the final file still fits the cap. Only the
+    // non-strip metadata modes embed bytes, and only when the pixels were not converted to sRGB
+    // (a converted image embeds no ICC). The default StripAll mode reserves nothing.
+    let metadata_reserve: u64 =
+        if options.metadata != MetadataMode::StripAll && !options.convert_srgb {
+            match (&meta.icc, fmt.extension()) {
+                (Some(icc), "jpg" | "png") => icc.len() as u64 + 24,
+                _ => 0,
+            }
+        } else {
+            0
+        };
+    let effective_cap = cap.saturating_sub(metadata_reserve);
+
+    match compress_to_target(&base, effective_cap, fmt, options, allow_downscale) {
+        Ok(Some(target)) => {
+            // Re-embed metadata per mode (passthrough for StripAll), then write the muxed bytes.
+            let final_bytes =
+                crate::metadata::mux_metadata(target.bytes, &meta, options, fmt.extension());
+            match resolve_output_path(path, options, fmt.extension()) {
+                Resolved::Path(out) => match std::fs::write(&out, &final_bytes) {
+                    Ok(()) => {
+                        result.output = Some(out);
+                        result.outcome = Outcome::Compressed {
+                            final_bytes: final_bytes.len() as u64,
+                            quality: target.quality,
+                            width: target.width,
+                            height: target.height,
+                            downscaled: target.downscaled,
+                        };
+                    }
+                    Err(e) => {
+                        result.outcome = Outcome::Failed {
+                            reason: format!("write: {e}"),
+                        };
+                    }
+                },
+                Resolved::SkipCollision => result.outcome = Outcome::SkippedCollision,
+            }
+        }
         Ok(None) => {
             result.outcome = Outcome::Unreachable {
                 reason: match options.resize {
