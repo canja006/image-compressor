@@ -1,0 +1,11 @@
+version: 2
+# Keep the SHA-pinned GitHub Actions current. With actions pinned to full commit SHAs (a supply-chain
+# hardening measure), Dependabot opens PRs that bump the SHA and its `# vX` comment when upstream
+# publishes a new release — so the pins don't silently go stale or miss upstream security fixes.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
