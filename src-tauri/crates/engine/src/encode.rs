@@ -1,5 +1,6 @@
 use crate::error::EngineError;
 use crate::model::Options;
+#[cfg(not(feature = "mozjpeg"))]
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{DynamicImage, ExtendedColorType, ImageEncoder, RgbImage};
@@ -76,6 +77,8 @@ fn encode_avif(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, EngineError> 
     Ok(encoded.avif_file)
 }
 
+/// Pure-Rust JPEG encode via the `image` crate. The default (feature-OFF) path — needs no C toolchain.
+#[cfg(not(feature = "mozjpeg"))]
 fn encode_jpeg(
     img: &DynamicImage,
     quality: u8,
@@ -93,6 +96,31 @@ fn encode_jpeg(
         )
         .map_err(|e| EngineError::Encode(e.to_string()))?;
     }
+    Ok(buf)
+}
+
+/// mozjpeg (trellis-quantized) JPEG encode — smaller files at equal quality. Compiled only with
+/// `--features mozjpeg`; statically links libjpeg-turbo/mozjpeg at build time. The encoded pixels are
+/// the SAME flattened RGB8 the pure-Rust path uses, so the size search stays encoder-agnostic.
+#[cfg(feature = "mozjpeg")]
+fn encode_jpeg(
+    img: &DynamicImage,
+    quality: u8,
+    background: [u8; 3],
+) -> Result<Vec<u8>, EngineError> {
+    let rgb = flatten_to_rgb(img, background);
+    let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
+    comp.set_size(rgb.width() as usize, rgb.height() as usize);
+    comp.set_quality(f32::from(quality.clamp(1, 100)));
+    let mut started = comp
+        .start_compress(Vec::new())
+        .map_err(|e| EngineError::Encode(e.to_string()))?;
+    started
+        .write_scanlines(rgb.as_raw())
+        .map_err(|e| EngineError::Encode(e.to_string()))?;
+    let buf = started
+        .finish()
+        .map_err(|e| EngineError::Encode(e.to_string()))?;
     Ok(buf)
 }
 

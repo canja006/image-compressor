@@ -66,6 +66,11 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
+      # mozjpeg-sys needs NASM + a C compiler at build time (statically linked into the installer).
+      # setup-nasm provides NASM on both Windows and macOS runners.
+      - name: Install NASM (for the mozjpeg encoder build)
+        uses: ilammy/setup-nasm@v1
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
@@ -84,4 +89,5 @@ jobs:
           #   Windows: configure Authenticode via tauri.conf.json bundle.windows
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
-          args: ${{ matrix.args }}
+          # Build the release installers with the trellis-quantized mozjpeg JPEG encoder ON.
+          args: ${{ matrix.args }} --features mozjpeg

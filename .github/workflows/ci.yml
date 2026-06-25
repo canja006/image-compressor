@@ -3,6 +3,10 @@ name: CI
 # Runs the full quality gate (`npm run verify`) on every push and pull request:
 # TypeScript typecheck, ESLint, Vitest, plus cargo fmt/clippy/test across the Rust workspace.
 # Linux carries the Tauri system dependencies so the app crate is checked too.
+#
+# A second job (`mozjpeg-feature`) installs NASM + a C toolchain and clippy/test the engine crate
+# with `--features mozjpeg` (the optional trellis-quantized JPEG encoder). It is kept SEPARATE from
+# the `verify` job so the main gate stays pure-Rust and needs no C toolchain.
 
 on:
   push:
@@ -52,3 +56,34 @@ jobs:
 
       - name: Verify (typecheck, lint, tests, Rust fmt/clippy/test)
         run: npm run verify
+
+  # Builds ONLY the engine crate with the optional mozjpeg encoder. Needs NASM + a C compiler at
+  # build time (statically linked into the binary); deliberately does not install the webkit/Tauri
+  # system deps because the engine crate has none. The release installers build with this feature.
+  mozjpeg-feature:
+    name: mozjpeg feature build (engine)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install NASM + C toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm build-essential
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Clippy + test the engine with --features mozjpeg
+        working-directory: src-tauri
+        run: |
+          cargo clippy -p engine --all-targets --features mozjpeg -- -D warnings
+          cargo test -p engine --features mozjpeg

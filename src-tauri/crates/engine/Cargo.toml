@@ -9,6 +9,12 @@ license = "MIT"
 name = "engine"
 path = "src/lib.rs"
 
+[features]
+# Optional mozjpeg (trellis-quantized) JPEG encoder. BUILD-time only: needs a C compiler + NASM,
+# statically linked into the binary; nothing is required on the user's machine. Default = OFF so the
+# `npm run verify` build stays pure-Rust; release installers build with `--features mozjpeg`.
+mozjpeg = ["dep:mozjpeg"]
+
 [dependencies]
 image = { version = "0.25", default-features = false, features = [
     "jpeg",
@@ -26,6 +32,8 @@ ravif = { version = "0.11", default-features = false, features = ["threading"] }
 rgb = "0.8"
 # Pure-Rust lossless PNG optimizer (no C deps with these features).
 oxipng = { version = "9", default-features = false, features = ["parallel", "zopfli"] }
+# Optional: enabled only by the `mozjpeg` feature above (build-time C + NASM, statically linked).
+mozjpeg = { version = "0.10", optional = true }
 
 [dev-dependencies]
 # Integration tests (tests/) are a separate crate, so they need `image` and `serde_json`

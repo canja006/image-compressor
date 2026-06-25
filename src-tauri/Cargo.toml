@@ -24,6 +24,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 
+[features]
+# Forwards the engine's optional mozjpeg (trellis-quantized JPEG) encoder to the app build. Release
+# installers build with `--features mozjpeg`; the default/`verify` build stays pure-Rust. The C deps
+# are build-time only and statically linked — nothing extra is required on the user's machine.
+mozjpeg = ["engine/mozjpeg"]
+
 [workspace]
 members = ["crates/engine"]
 resolver = "2"
