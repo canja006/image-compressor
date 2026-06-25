@@ -12,7 +12,8 @@ A standalone Windows + macOS desktop app that compresses and resizes images to h
 - **Target file size** with a KB / MB toggle, plus an optional max-dimension (longest edge) cap
 - **Per-file cap overrides**, or a **total-folder budget** mode that fits a whole set under one combined cap (split across images by size)
 - Input: JPEG, PNG, WebP, TIFF. Output: JPEG (default), PNG (lossless, oxipng-optimized), or AVIF (best ratio, slower), plus "keep original"
-- **Live before/after preview** with a size readout for the first image, recomputed as you change settings
+- **Live before/after preview** — click any image to preview it; the size/quality readout recomputes instantly as you change settings (the decoded source is cached, so tweaks are fast)
+- **Thumbnails** in the file list, with a selectable preview target
 - Transparency handling: PNG/AVIF keep alpha; JPEG flattens onto a configurable background color
 - Parallel batch processing (Rust `rayon`, capped to the core count) with overall + per-file progress
 - **Cancel** mid-run with accurate partial results
@@ -31,7 +32,7 @@ When a cap is reachable the output is **always ≤ the cap**, and the search ret
 - **Tauri 2** — Rust core; WebView2 on Windows, WKWebView on macOS
 - **React 18 + TypeScript (strict) + Vite** frontend, **Tailwind CSS**, **Zustand** state
 - Tauri plugins: `dialog`, `fs`, `store`
-- Engine crates: `image` (decode/encode), `ravif` (AVIF), `fast_image_resize` (Lanczos3 resize), `rayon`, `thiserror`, `serde`
+- Engine crates: `image` (decode/encode), `ravif` (AVIF), `oxipng` (lossless PNG optimization), `fast_image_resize` (Lanczos3 resize), `rayon`, `thiserror`, `serde`
 
 The compression engine is a **separate workspace crate** (`src-tauri/crates/engine`) with **no Tauri dependency**, so it is platform-neutral and unit-testable on its own.
 
@@ -84,7 +85,7 @@ You cannot build both installers on one machine — each OS's bundle must be bui
 - Windows → `.msi` (WiX) and `.exe` (NSIS)
 - macOS → universal `.dmg` / `.app` (Apple Silicon + Intel)
 
-Push a tag like `v0.1.0` to trigger it. Optional code signing — Windows Authenticode, macOS Developer ID + notarization — is left to the maintainer.
+Push a tag like `v0.3.3` to trigger it; the workflow creates a draft GitHub Release and attaches the installers. Optional code signing — Windows Authenticode, macOS Developer ID + notarization — is left to the maintainer.
 
 ## Encoder backend (a deliberate decision)
 

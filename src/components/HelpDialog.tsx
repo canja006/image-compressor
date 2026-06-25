@@ -14,7 +14,7 @@ const STEPS: ReadonlyArray<Step> = [
   },
   {
     title: 'Set the target size',
-    body: 'Type a cap in KB or MB, or tap a preset — Web (500 KB), Portal (2 MB), Email (10 MB). Optionally cap the longest edge under Limit dimensions.',
+    body: 'Type a cap in KB or MB, or tap a preset — Web (500 KB), Portal (2 MB), Email (10 MB). Switch Per file / Total to cap each image individually or fit the whole set under one combined budget, and optionally cap the longest edge under Limit dimensions.',
   },
   {
     title: 'Choose a format',
@@ -22,7 +22,7 @@ const STEPS: ReadonlyArray<Step> = [
   },
   {
     title: 'Compress',
-    body: 'Each image is written next to the original (or your chosen output folder) with a -compressed suffix. The Preview panel shows the result for the first image before you run the batch.',
+    body: 'Each image is written next to the original (or your chosen output folder) with a -compressed suffix. Click any image in the list to preview its result before you run the batch.',
   },
 ]
 
