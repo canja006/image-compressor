@@ -147,26 +147,35 @@ fn process_one(
     if options.skip_if_under_cap && original_bytes <= cap && original_bytes > 0 {
         match validate_image_dimensions(path) {
             Some(dims) => match copy_as_is(path, options, seq, date, dims) {
-                Ok(Some(out)) => {
+                Ok(CopyOutcome::Wrote(out)) => {
                     result.output = Some(out);
                     result.outcome = Outcome::SkippedUnderCap {
                         bytes: original_bytes,
                     };
+                    return result;
                 }
-                Ok(None) => result.outcome = Outcome::SkippedCollision,
+                Ok(CopyOutcome::Collision) => {
+                    result.outcome = Outcome::SkippedCollision;
+                    return result;
+                }
+                // The metadata policy can't be honored by a lossless copy (rotated JPEG, non-JPEG
+                // container, or a parse failure); fall through to the re-encode path below, which
+                // strips all metadata and bakes orientation.
+                Ok(CopyOutcome::NeedsReencode) => {}
                 Err(e) => {
                     result.outcome = Outcome::Failed {
                         reason: e.to_string(),
-                    }
+                    };
+                    return result;
                 }
             },
             None => {
                 result.outcome = Outcome::Failed {
                     reason: "unreadable or corrupt image".to_string(),
-                }
+                };
+                return result;
             }
         }
-        return result;
     }
 
     let bytes = match std::fs::read(path) {
@@ -352,14 +361,43 @@ fn validate_image_dimensions(path: &Path) -> Option<(u32, u32)> {
 /// Copy a source that is already under the cap to its resolved output path, keeping the original
 /// extension. Returns the destination, or `None` if a `Skip` collision policy declined it. Honors a
 /// rename pattern; `{w}`/`{h}` come from `dims` (already read when the image was validated).
+/// Outcome of the skip/copy path for an already-under-cap file.
+enum CopyOutcome {
+    /// Wrote the output — verbatim, or with metadata losslessly stripped to match the mode.
+    Wrote(PathBuf),
+    /// The computed output path already existed and the collision policy is `Skip`.
+    Collision,
+    /// A lossless copy can't honor the metadata policy (rotated JPEG, non-JPEG container, or a parse
+    /// failure); the caller should re-encode the file instead.
+    NeedsReencode,
+}
+
+/// Emit an under-cap file without re-compressing it, while still honoring the metadata policy. A
+/// blind `std::fs::copy` would leak EXIF/GPS the user asked to strip, so the bytes are first run
+/// through [`crate::metadata::plan_copy`]: `KeepAll` copies verbatim, an upright JPEG is rewritten
+/// with its metadata segments stripped (lossless — pixels untouched), and anything else asks the
+/// caller to re-encode.
 fn copy_as_is(
     path: &Path,
     options: &Options,
     seq: usize,
     date: &str,
     dims: (u32, u32),
-) -> Result<Option<PathBuf>, EngineError> {
+) -> Result<CopyOutcome, EngineError> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("img");
+
+    // Read the (small, under-cap) source once and decide how to write it so the output matches the
+    // metadata setting. `Reencode` bails out before touching the filesystem.
+    let original = std::fs::read(path).map_err(|e| EngineError::Io {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    let bytes: Vec<u8> = match crate::metadata::plan_copy(&original, options.metadata, ext) {
+        crate::metadata::CopyPlan::Verbatim => original,
+        crate::metadata::CopyPlan::Stripped(b) => b,
+        crate::metadata::CopyPlan::Reencode => return Ok(CopyOutcome::NeedsReencode),
+    };
+
     let (width, height) = dims;
     let info = NameInfo {
         seq,
@@ -371,15 +409,16 @@ fn copy_as_is(
     match resolve_output_path_with_base(path, options, ext, &base) {
         Resolved::Path(out) => {
             if out == path {
-                return Ok(Some(out)); // output would be the source itself; nothing to copy
+                // Output would be the source file itself; never rewrite the user's original in place.
+                return Ok(CopyOutcome::Wrote(out));
             }
-            std::fs::copy(path, &out).map_err(|e| EngineError::Io {
+            std::fs::write(&out, &bytes).map_err(|e| EngineError::Io {
                 path: out.clone(),
                 source: e,
             })?;
-            Ok(Some(out))
+            Ok(CopyOutcome::Wrote(out))
         }
-        Resolved::SkipCollision => Ok(None),
+        Resolved::SkipCollision => Ok(CopyOutcome::Collision),
     }
 }
 
@@ -672,6 +711,207 @@ mod tests {
             result_for(&good).outcome,
             Outcome::SkippedUnderCap { .. }
         ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A minimal little-endian EXIF TIFF carrying an Orientation tag, with `marker` appended after
+    /// the IFD. EXIF readers parse the orientation and ignore the trailing bytes; the marker simply
+    /// gives the test a recognizable stand-in for sensitive payload (GPS/etc.) to grep for.
+    fn exif_tiff(orientation: u16, marker: &[u8]) -> Vec<u8> {
+        let mut t = Vec::new();
+        t.extend_from_slice(b"II"); // little-endian byte order
+        t.extend_from_slice(&42u16.to_le_bytes());
+        t.extend_from_slice(&8u32.to_le_bytes()); // IFD0 begins at offset 8
+        t.extend_from_slice(&1u16.to_le_bytes()); // one directory entry
+        t.extend_from_slice(&0x0112u16.to_le_bytes()); // Orientation tag
+        t.extend_from_slice(&3u16.to_le_bytes()); // type SHORT
+        t.extend_from_slice(&1u32.to_le_bytes()); // count 1
+        t.extend_from_slice(&orientation.to_le_bytes()); // value (SHORT in the low 2 bytes)
+        t.extend_from_slice(&[0u8, 0u8]); // pad the 4-byte value field
+        t.extend_from_slice(&0u32.to_le_bytes()); // no next IFD
+        t.extend_from_slice(marker);
+        t
+    }
+
+    /// Write a JPEG that carries EXIF (the given orientation + `marker`), to exercise the metadata
+    /// handling of the skip/copy path.
+    fn write_jpeg_with_exif(
+        dir: &Path,
+        name: &str,
+        w: u32,
+        h: u32,
+        orientation: u16,
+        marker: &[u8],
+    ) -> PathBuf {
+        use img_parts::jpeg::Jpeg;
+        use img_parts::{Bytes, ImageEXIF};
+
+        let mut img = RgbImage::new(w, h);
+        for (x, y, p) in img.enumerate_pixels_mut() {
+            *p = Rgb([((x ^ y) & 0xff) as u8, (y & 0xff) as u8, (x & 0xff) as u8]);
+        }
+        let jpeg_bytes = encode(
+            &image::DynamicImage::ImageRgb8(img),
+            EncodeFormat::Jpeg {
+                background: [255, 255, 255],
+            },
+            Some(92),
+        )
+        .unwrap();
+        let mut jpeg = Jpeg::from_bytes(Bytes::from(jpeg_bytes)).unwrap();
+        jpeg.set_exif(Some(Bytes::from(exif_tiff(orientation, marker))));
+        let mut out = Vec::new();
+        jpeg.encoder().write_to(&mut out).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, out).unwrap();
+        path
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    #[test]
+    fn under_cap_strip_all_removes_exif_and_gps_losslessly() {
+        // Regression: an under-cap file used to be copied byte-for-byte, so with the default
+        // `StripAll` an upright photo kept its EXIF/GPS. The copy path must strip metadata — and do
+        // it losslessly, without re-compressing the pixels.
+        let dir = std::env::temp_dir().join(format!("ic_meta_strip_{}", std::process::id()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        let marker = b"ZZ_GPS_PAYLOAD_MARKER_ZZ";
+        let src = write_jpeg_with_exif(&dir, "photo.jpg", 200, 150, 1, marker);
+        let src_bytes = std::fs::read(&src).unwrap();
+        assert!(
+            contains(&src_bytes, marker),
+            "fixture sanity: the source must embed the marker"
+        );
+
+        let options = Options {
+            cap_bytes: 5_000_000, // comfortably above the small fixture -> copy path
+            skip_if_under_cap: true,
+            collision: CollisionPolicy::Overwrite,
+            output_dir: Some(out.clone()),
+            metadata: MetadataMode::StripAll,
+            ..Options::default()
+        };
+        let cancel = AtomicBool::new(false);
+        let summary = compress_batch(&[BatchItem::new(src.clone())], &options, &cancel, &|_p| {});
+
+        let r = &summary.results[0];
+        assert!(
+            matches!(r.outcome, Outcome::SkippedUnderCap { .. }),
+            "an upright JPEG is still copied (not re-encoded); got {:?}",
+            r.outcome
+        );
+        let out_bytes = std::fs::read(r.output.as_ref().expect("an output file")).unwrap();
+
+        assert!(
+            !contains(&out_bytes, marker),
+            "the EXIF/GPS marker must be stripped from the output"
+        );
+        assert!(
+            crate::metadata::read_source_meta(&out_bytes)
+                .orientation
+                .is_none(),
+            "the EXIF orientation tag must be gone too"
+        );
+        // Lossless: identical pixels, only the metadata changed.
+        let src_px = image::load_from_memory(&src_bytes).unwrap().to_rgb8();
+        let out_px = image::load_from_memory(&out_bytes).unwrap().to_rgb8();
+        assert_eq!(
+            src_px, out_px,
+            "pixels must be untouched by the metadata strip"
+        );
+        assert_ne!(
+            out_bytes, src_bytes,
+            "the output must differ (metadata removed)"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn under_cap_rotated_jpeg_strip_falls_back_to_reencode() {
+        // A rotated source can't be stripped losslessly (dropping the orientation tag would leave the
+        // pixels sideways), so the copy path defers to a re-encode that bakes orientation and strips
+        // metadata.
+        let dir = std::env::temp_dir().join(format!("ic_meta_rot_{}", std::process::id()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        let marker = b"ZZ_ROTATED_GPS_MARKER_ZZ";
+        let src = write_jpeg_with_exif(&dir, "rot.jpg", 200, 150, 6, marker); // orientation 6 = 90° turn
+
+        let options = Options {
+            cap_bytes: 5_000_000,
+            skip_if_under_cap: true,
+            collision: CollisionPolicy::Overwrite,
+            output_dir: Some(out.clone()),
+            metadata: MetadataMode::StripAll,
+            ..Options::default()
+        };
+        let cancel = AtomicBool::new(false);
+        let summary = compress_batch(&[BatchItem::new(src.clone())], &options, &cancel, &|_p| {});
+
+        let r = &summary.results[0];
+        assert!(
+            matches!(r.outcome, Outcome::Compressed { .. }),
+            "a rotated under-cap JPEG is re-encoded, not skipped; got {:?}",
+            r.outcome
+        );
+        let out_bytes = std::fs::read(r.output.as_ref().expect("an output file")).unwrap();
+        assert!(
+            !contains(&out_bytes, marker),
+            "metadata must be stripped on the re-encode fallback too"
+        );
+        assert!(crate::metadata::read_source_meta(&out_bytes)
+            .orientation
+            .is_none());
+        // Orientation 6 swaps the dimensions once baked: 200x150 (landscape) -> 150x200 (portrait).
+        let decoded = image::load_from_memory(&out_bytes).unwrap();
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (150, 200),
+            "orientation must be baked into the pixels (dimensions swapped)"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn under_cap_keep_all_copies_verbatim_with_metadata() {
+        // The flip side: `KeepAll` must still copy the file verbatim, metadata included — the strip
+        // logic must not over-reach and clobber metadata a user asked to keep.
+        let dir = std::env::temp_dir().join(format!("ic_meta_keep_{}", std::process::id()));
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        let marker = b"ZZ_KEEPALL_MARKER_ZZ";
+        let src = write_jpeg_with_exif(&dir, "keep.jpg", 200, 150, 1, marker);
+        let src_bytes = std::fs::read(&src).unwrap();
+
+        let options = Options {
+            cap_bytes: 5_000_000,
+            skip_if_under_cap: true,
+            collision: CollisionPolicy::Overwrite,
+            output_dir: Some(out.clone()),
+            metadata: MetadataMode::KeepAll,
+            ..Options::default()
+        };
+        let cancel = AtomicBool::new(false);
+        let summary = compress_batch(&[BatchItem::new(src.clone())], &options, &cancel, &|_p| {});
+
+        let r = &summary.results[0];
+        assert!(matches!(r.outcome, Outcome::SkippedUnderCap { .. }));
+        let out_bytes = std::fs::read(r.output.as_ref().expect("an output file")).unwrap();
+        assert_eq!(
+            out_bytes, src_bytes,
+            "KeepAll must copy the file verbatim, metadata and all"
+        );
+        assert!(contains(&out_bytes, marker));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

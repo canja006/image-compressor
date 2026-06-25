@@ -156,3 +156,64 @@ pub fn mux_metadata(encoded: Vec<u8>, meta: &SourceMeta, opts: &Options, fmt_ext
         _ => encoded,
     }
 }
+
+/// How the skip/copy path (an already-under-cap file) should emit its output so the result still
+/// honors the metadata policy. A verbatim `std::fs::copy` would leak EXIF/GPS the user asked to
+/// strip, so [`plan_copy`] picks one of these instead.
+pub enum CopyPlan {
+    /// Copy the source bytes through unchanged — `KeepAll`, where retaining everything is the intent.
+    Verbatim,
+    /// Write these rewritten bytes: identical pixels, metadata stripped per the mode (lossless).
+    Stripped(Vec<u8>),
+    /// A lossless copy can't honor the policy (a rotated JPEG whose orientation must be baked into
+    /// the pixels, a non-JPEG container, or a parse failure). The caller should re-encode instead,
+    /// which reliably drops all metadata and bakes orientation.
+    Reencode,
+}
+
+/// Decide how the skip/copy path should write `original` so the output matches `mode`. An upright
+/// JPEG (no EXIF orientation, or orientation 1) gets a lossless segment strip; everything else falls
+/// back to a re-encode so no metadata can leak. `KeepAll` is always a verbatim copy.
+///
+/// This exists because "already under the cap, copy as-is" must not become a privacy hole: with the
+/// default `StripAll`, an under-cap photo would otherwise be copied with its GPS intact.
+pub fn plan_copy(original: &[u8], mode: MetadataMode, ext: &str) -> CopyPlan {
+    if mode == MetadataMode::KeepAll {
+        return CopyPlan::Verbatim;
+    }
+    // A rotated source needs its orientation baked into the pixels to stay upright once the EXIF
+    // orientation tag is dropped; only a re-encode can do that.
+    let meta = read_source_meta(original);
+    if matches!(meta.orientation, Some(2..=8)) {
+        return CopyPlan::Reencode;
+    }
+    match ext.to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => match strip_jpeg_metadata(original, mode) {
+            Some(bytes) => CopyPlan::Stripped(bytes),
+            None => CopyPlan::Reencode,
+        },
+        // PNG re-encoding (oxipng) is lossless and already strips metadata, so routing PNG — and any
+        // other container (webp/tiff/avif) — through the normal path costs no quality and cannot leak.
+        _ => CopyPlan::Reencode,
+    }
+}
+
+/// Losslessly remove privacy-bearing metadata from an encoded JPEG without re-compressing the pixels:
+/// every APP1 (EXIF incl. GPS, and XMP), APP13 (Photoshop/IPTC) and COM (comment) segment is dropped;
+/// `StripAll` additionally drops the ICC profile, while the keep / strip-GPS modes retain it. Returns
+/// `None` on any parse/encode failure so the caller falls back to a full re-encode.
+fn strip_jpeg_metadata(original: &[u8], mode: MetadataMode) -> Option<Vec<u8>> {
+    const APP1: u8 = 0xE1; // EXIF (incl. GPS) + XMP
+    const APP13: u8 = 0xED; // Photoshop / IPTC
+    const COM: u8 = 0xFE; // free-text comment
+    let mut jpeg = Jpeg::from_bytes(Bytes::from(original.to_vec())).ok()?;
+    jpeg.remove_segments_by_marker(APP1);
+    jpeg.remove_segments_by_marker(APP13);
+    jpeg.remove_segments_by_marker(COM);
+    if mode == MetadataMode::StripAll {
+        jpeg.set_icc_profile(None);
+    }
+    let mut out = Vec::new();
+    jpeg.encoder().write_to(&mut out).ok()?;
+    Some(out)
+}
