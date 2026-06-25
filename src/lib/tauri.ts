@@ -62,6 +62,39 @@ export async function onProgress(handler: (p: Progress) => void): Promise<Unlist
   return listen<Progress>('compress-progress', (event) => handler(event.payload))
 }
 
+/** Status updates from the folder watcher (B1). Mirrors the Rust `WatchEvent` tagged union. */
+export type WatchEvent =
+  | { kind: 'started'; dir: string }
+  | { kind: 'processing'; path: string }
+  | { kind: 'processed'; path: string; ok: boolean; detail: string; output: string | null }
+  | { kind: 'error'; message: string }
+  | { kind: 'stopped' }
+
+/** Start watching `dir`, compressing each dropped image with `options`. The backend rejects when the
+ *  output folder is missing or equal to the watched folder (prevents re-ingesting its own output). */
+export async function startWatch(dir: string, options: Options): Promise<void> {
+  if (!isTauri()) return
+  await invoke('start_watch', { dir, options })
+}
+
+/** Stop the active folder watch (no-op if none is running). */
+export async function stopWatch(): Promise<void> {
+  if (!isTauri()) return
+  await invoke('stop_watch')
+}
+
+/** Whether a folder watch is currently active (so the UI can restore its state after a reload). */
+export async function watchStatus(): Promise<boolean> {
+  if (!isTauri()) return false
+  return invoke<boolean>('watch_status')
+}
+
+/** Subscribe to folder-watcher status events. Returns an unlisten function. */
+export async function onWatchEvent(handler: (e: WatchEvent) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {}
+  return listen<WatchEvent>('watch-event', (event) => handler(event.payload))
+}
+
 type DragState = 'enter' | 'over' | 'drop' | 'leave'
 
 /** Subscribe to native file drag-and-drop over the window. Returns an unlisten function. */

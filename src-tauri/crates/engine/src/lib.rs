@@ -18,6 +18,7 @@ pub mod preview;
 pub mod rename;
 pub mod resize;
 pub mod target;
+pub mod watch;
 
 pub use batch::{compress_batch, is_supported, scan_inputs, SUPPORTED_EXTENSIONS};
 pub use crop::{cover_crop_rect, cover_crop_resize, CropRect};
@@ -33,3 +34,4 @@ pub use preview::{
 };
 pub use rename::{expand_name, NameContext};
 pub use target::{compress_to_target, TargetResult};
+pub use watch::{should_ingest, SettleTracker};

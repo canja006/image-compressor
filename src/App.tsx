@@ -4,6 +4,7 @@ import { Presets } from './components/Presets'
 import { PresetBar } from './components/PresetBar'
 import { CapControls } from './components/CapControls'
 import { Settings } from './components/Settings'
+import { WatchPanel } from './components/WatchPanel'
 import { RunBar } from './components/RunBar'
 import { SummaryBanner } from './components/SummaryBanner'
 import { SamplePreview } from './components/SamplePreview'
@@ -117,6 +118,7 @@ export default function App() {
             <CapControls />
           </Panel>
           <Settings />
+          <WatchPanel />
           <Panel className="sticky bottom-0 mt-auto p-4 shadow-panel">
             <RunBar />
           </Panel>

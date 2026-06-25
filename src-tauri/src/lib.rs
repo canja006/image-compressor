@@ -2,6 +2,7 @@
 //! layer only exposes commands, manages the cancel flag, and relays progress events to the UI.
 
 mod commands;
+mod watcher;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(CancelState::default())
         .manage(commands::PreviewCache::default())
+        .manage(watcher::WatchState::default())
         .invoke_handler(tauri::generate_handler![
             commands::scan_inputs,
             commands::compress_batch,
@@ -25,6 +27,9 @@ pub fn run() {
             commands::preview_sample,
             commands::preview_rename,
             commands::thumbnail,
+            watcher::start_watch,
+            watcher::stop_watch,
+            watcher::watch_status,
         ])
         .run(tauri::generate_context!());
 
