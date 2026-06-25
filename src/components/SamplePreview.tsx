@@ -15,6 +15,7 @@ export function SamplePreview() {
   const selectedPath = useStore((s) => s.selectedPath)
   const settings = useStore((s) => s.settings)
   const phase = useStore((s) => s.phase)
+  const setPreviewSource = useStore((s) => s.setPreviewSource)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -26,6 +27,7 @@ export function SamplePreview() {
     // Only preview while configuring (idle) — once compressed, the rows/summary show the results.
     if (!samplePath || !isTauri() || phase !== 'idle') {
       setPreview(null)
+      setPreviewSource(null)
       return
     }
     let cancelled = false
@@ -43,12 +45,18 @@ export function SamplePreview() {
         .then((result) => {
           if (!cancelled) {
             setPreview(result)
+            setPreviewSource(
+              result && result.sourceWidth > 0
+                ? { width: result.sourceWidth, height: result.sourceHeight }
+                : null,
+            )
             setLoading(false)
           }
         })
         .catch(() => {
           if (!cancelled) {
             setPreview(null)
+            setPreviewSource(null)
             setLoading(false)
           }
         })
@@ -57,7 +65,7 @@ export function SamplePreview() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [samplePath, settings, phase, inputs])
+  }, [samplePath, settings, phase, inputs, setPreviewSource])
 
   if (!sample || !isTauri() || phase !== 'idle') return null
 

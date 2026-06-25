@@ -2,10 +2,11 @@
 //! the encoded bytes for a live before/after readout. Nothing is written to disk.
 
 use crate::batch::resolve_format_with_alpha;
+use crate::crop::cover_crop_resize;
 use crate::decode::decode;
 use crate::encode::{encode, EncodeFormat};
 use crate::error::EngineError;
-use crate::model::Options;
+use crate::model::{Options, ResizeMode};
 use crate::resize::downscale_to_long_edge;
 use crate::target::compress_to_target;
 use image::DynamicImage;
@@ -76,12 +77,9 @@ pub struct PreviewSource {
 /// extrapolated back to the full resolution, so accuracy holds.
 const PREVIEW_MAX_DIM: u32 = 720;
 
-/// Decode `path`, apply the max-dimension cap, and downscale a working copy for a fast preview
-/// search. The result is cacheable across cap/format changes (only `max_dimension` invalidates it).
-pub fn prepare_source(
-    path: &Path,
-    max_dimension: Option<u32>,
-) -> Result<PreviewSource, EngineError> {
+/// Decode `path`, size it per the resize mode, and downscale a working copy for a fast preview
+/// search. The result is cacheable across cap/format changes (only the resize mode invalidates it).
+pub fn prepare_source(path: &Path, resize: &ResizeMode) -> Result<PreviewSource, EngineError> {
     let raw = std::fs::read(path).map_err(|e| EngineError::Io {
         path: path.to_path_buf(),
         source: e,
@@ -91,10 +89,18 @@ pub fn prepare_source(
     let source_height = img.height();
     let has_alpha = img.color().has_alpha();
 
-    // The intended output resolution (after any max-dimension cap).
-    let base = match max_dimension {
-        Some(maxd) => downscale_to_long_edge(&img, maxd)?,
-        None => img,
+    // The intended output resolution: a fit-by-longest-edge bound, or the exact crop-to-fill target.
+    let base = match *resize {
+        ResizeMode::Fit { max_dimension } => match max_dimension {
+            Some(maxd) => downscale_to_long_edge(&img, maxd)?,
+            None => img,
+        },
+        ResizeMode::Exact {
+            width,
+            height,
+            anchor,
+            allow_upscale,
+        } => cover_crop_resize(&img, width, height, anchor, allow_upscale)?,
     };
     let base_width = base.width();
     let base_height = base.height();
@@ -150,7 +156,9 @@ pub fn preview_from_source(
         options.cap_bytes
     };
 
-    match compress_to_target(&source.work, search_cap, fmt, options) {
+    // Exact mode locks dimensions, so the preview search must vary quality only (matching the run).
+    let allow_downscale = matches!(options.resize, ResizeMode::Fit { .. });
+    match compress_to_target(&source.work, search_cap, fmt, options, allow_downscale) {
         Ok(Some(t)) => {
             let final_bytes = if approx {
                 ((t.bytes.len() as f64) / ratio).round() as u64
@@ -199,7 +207,7 @@ pub fn preview_from_source(
 /// Compress one image entirely in memory and return the result plus its encoded bytes.
 pub fn preview(path: &Path, options: &Options) -> Preview {
     let original_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    match prepare_source(path, options.max_dimension) {
+    match prepare_source(path, &options.resize) {
         Ok(source) => preview_from_source(&source, original_bytes, options),
         Err(e) => Preview::failed(original_bytes, e.to_string()),
     }

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type {
+  Anchor,
   BatchSummary,
   CollisionPolicy,
   FileResult,
@@ -21,8 +22,14 @@ export interface Settings {
   capValue: number
   capUnit: SizeUnit
   capMode: CapMode
+  /** 'fit' preserves aspect ratio (longest-edge cap); 'exact' crops to an exact width × height. */
+  resizeMode: 'fit' | 'exact'
   maxDimensionEnabled: boolean
   maxDimension: number
+  exactWidth: number
+  exactHeight: number
+  exactAnchor: Anchor
+  exactAllowUpscale: boolean
   outputFormat: OutputFormat
   outputDir: string | null
   suffix: string
@@ -38,8 +45,13 @@ export const DEFAULT_SETTINGS: Settings = {
   capValue: 500,
   capUnit: 'KB',
   capMode: 'perFile',
+  resizeMode: 'fit',
   maxDimensionEnabled: false,
   maxDimension: 2000,
+  exactWidth: 1920,
+  exactHeight: 1080,
+  exactAnchor: 'center',
+  exactAllowUpscale: true,
   outputFormat: 'jpeg',
   outputDir: null,
   suffix: '-compressed',
@@ -77,7 +89,19 @@ function persistSettings(settings: Settings): void {
 export function buildOptions(s: Settings): Options {
   return {
     capBytes: parseSizeToBytes(s.capValue, s.capUnit),
-    maxDimension: s.maxDimensionEnabled ? Math.max(1, Math.floor(s.maxDimension)) : null,
+    resize:
+      s.resizeMode === 'exact'
+        ? {
+            mode: 'exact',
+            width: Math.max(1, Math.floor(s.exactWidth)),
+            height: Math.max(1, Math.floor(s.exactHeight)),
+            anchor: s.exactAnchor,
+            allowUpscale: s.exactAllowUpscale,
+          }
+        : {
+            mode: 'fit',
+            maxDimension: s.maxDimensionEnabled ? Math.max(1, Math.floor(s.maxDimension)) : null,
+          },
     outputFormat: s.outputFormat,
     outputDir: s.outputDir,
     suffix: s.suffix,
@@ -98,6 +122,8 @@ interface StoreState {
   capOverrides: Record<string, number>
   /** Which file the preview shows. `null` falls back to the first input. */
   selectedPath: string | null
+  /** Source pixel dimensions of the previewed image, for the live exact-crop note. */
+  previewSource: { width: number; height: number } | null
   phase: Phase
   completed: number
   total: number
@@ -108,6 +134,7 @@ interface StoreState {
   removeInput: (path: string) => void
   clearInputs: () => void
   selectPreview: (path: string) => void
+  setPreviewSource: (dims: { width: number; height: number } | null) => void
   setCapOverride: (path: string, bytes: number | null) => void
   updateSettings: (patch: Partial<Settings>) => void
   beginRun: () => void
@@ -122,6 +149,7 @@ export const useStore = create<StoreState>((set, get) => ({
   results: {},
   capOverrides: {},
   selectedPath: null,
+  previewSource: null,
   phase: 'idle',
   completed: 0,
   total: 0,
@@ -166,6 +194,8 @@ export const useStore = create<StoreState>((set, get) => ({
     }),
 
   selectPreview: (path) => set({ selectedPath: path }),
+
+  setPreviewSource: (dims) => set({ previewSource: dims }),
 
   setCapOverride: (path, bytes) =>
     set((state) => {

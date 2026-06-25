@@ -9,7 +9,8 @@ A standalone Windows + macOS desktop app that compresses and resizes images to h
 ## Features
 
 - Compress a single image or a whole batch (drag-and-drop files/folders, or the native picker; folders are scanned recursively)
-- **Target file size** with a KB / MB toggle, plus an optional max-dimension (longest edge) cap
+- **Target file size** with a KB / MB toggle
+- Two **resize modes**: *Fit* (preserve aspect ratio, optional longest-edge cap) or *Exact* — crop-to-fill to an exact width × height (centre/start/end anchor, no borders); in Exact mode dimensions are locked so only quality varies
 - **Per-file cap overrides**, or a **total-folder budget** mode that fits a whole set under one combined cap (split across images by size)
 - Input: JPEG, PNG, WebP, TIFF. Output: JPEG (default), PNG (lossless, oxipng-optimized), or AVIF (best ratio, slower), plus "keep original"
 - **Live before/after preview** — click any image to preview it; the size/quality readout recomputes instantly as you change settings (the decoded source is cached, so tweaks are fast)
@@ -26,6 +27,8 @@ A standalone Windows + macOS desktop app that compresses and resizes images to h
 Each image is decoded once and (optionally) downscaled to a max long edge. The encoder quality is then **binary-searched** for the largest file that still fits the cap. If even the lowest quality is over the cap, the dimensions are downscaled (by a factor derived from the size overshoot, clamped) and the search retries. If the longest edge falls below a 16 px floor and the cap still can't be met, the file is marked **unreachable**. All search happens in memory: each source is decoded once and written once.
 
 When a cap is reachable the output is **always ≤ the cap**, and the search returns the best quality under the cap (one quality step higher would exceed it). Rust tests assert exactly this.
+
+In Exact mode, crop-to-fill computes the crop in source space then resizes once; dimensions are locked so the quality search alone meets the cap, and an unmeetable cap at the exact size is reported unreachable (never silently shrunk).
 
 ## Tech stack
 

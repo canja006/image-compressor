@@ -14,6 +14,50 @@ pub enum OutputFormat {
     Avif,
 }
 
+/// Which edge a crop is anchored to on the axis being cropped when producing an exact size.
+/// Applies to the cropped axis only: left/centre/right when trimming width, top/centre/bottom when
+/// trimming height.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Anchor {
+    /// Keep the top (cropping height) or left (cropping width) edge.
+    Start,
+    /// Centre the crop (default).
+    #[default]
+    Center,
+    /// Keep the bottom (cropping height) or right (cropping width) edge.
+    End,
+}
+
+/// How the engine sizes the output before the byte-cap search runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum ResizeMode {
+    /// Preserve aspect ratio, bounding the longest edge. `max_dimension == None` means no resize.
+    /// Never upscales; the cap search may still downscale dimensions to meet the cap.
+    #[serde(rename_all = "camelCase")]
+    Fit { max_dimension: Option<u32> },
+    /// Produce EXACTLY `width` x `height` pixels via crop-to-fill (cover): scale and crop so the
+    /// image fully covers the box — never adding borders. Dimensions are locked, so the cap search
+    /// varies quality only and never downscales below the target (an unreachable cap stays
+    /// unreachable rather than silently shrinking the image).
+    #[serde(rename_all = "camelCase")]
+    Exact {
+        width: u32,
+        height: u32,
+        anchor: Anchor,
+        allow_upscale: bool,
+    },
+}
+
+impl Default for ResizeMode {
+    fn default() -> Self {
+        ResizeMode::Fit {
+            max_dimension: None,
+        }
+    }
+}
+
 /// What to do when the computed output path already exists on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,8 +76,9 @@ pub enum CollisionPolicy {
 pub struct Options {
     /// The hard size cap, in bytes. Output is always `<= cap_bytes` when reachable.
     pub cap_bytes: u64,
-    /// Optional cap on the longest edge (pixels), applied before the size search. Never upscales.
-    pub max_dimension: Option<u32>,
+    /// How the output is sized before the cap search: fit-by-longest-edge (the default) or an exact
+    /// crop-to-fill target.
+    pub resize: ResizeMode,
     pub output_format: OutputFormat,
     /// `None` writes next to each source file.
     pub output_dir: Option<PathBuf>,
@@ -57,7 +102,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             cap_bytes: 500 * 1024,
-            max_dimension: None,
+            resize: ResizeMode::default(),
             output_format: OutputFormat::Jpeg,
             output_dir: None,
             suffix: "-compressed".to_string(),

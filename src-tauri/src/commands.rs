@@ -3,7 +3,9 @@
 
 use crate::CancelState;
 use base64::Engine as _;
-use engine::{BatchItem, BatchSummary, InputFile, Options, Preview, PreviewSource, Progress};
+use engine::{
+    BatchItem, BatchSummary, InputFile, Options, Preview, PreviewSource, Progress, ResizeMode,
+};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -12,7 +14,7 @@ use tauri::{AppHandle, Emitter, State};
 /// A cached decoded+downscaled preview source, so changing only the cap/format doesn't re-decode.
 pub struct CacheEntry {
     path: String,
-    max_dimension: Option<u32>,
+    resize: ResizeMode,
     source: PreviewSource,
 }
 
@@ -79,25 +81,25 @@ pub async fn preview_sample(
     options: Options,
 ) -> Result<PreviewDto, String> {
     let cache = state.0.clone();
-    let max_dim = options.max_dimension;
+    let resize = options.resize;
 
     let preview = tauri::async_runtime::spawn_blocking(move || {
         let original_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
 
-        // Reuse the cached decoded+downscaled source when only the cap/format changed; re-decode
-        // only when the file or the max-dimension changed.
+        // Reuse the cached decoded+sized source when only the cap/format changed; re-decode only
+        // when the file or the resize mode (longest-edge cap or exact target) changed.
         let source = {
             let mut guard = match cache.lock() {
                 Ok(g) => g,
                 Err(poisoned) => poisoned.into_inner(),
             };
-            let hit = matches!(&*guard, Some(e) if e.path == path && e.max_dimension == max_dim);
+            let hit = matches!(&*guard, Some(e) if e.path == path && e.resize == resize);
             if !hit {
-                match engine::prepare_source(Path::new(&path), max_dim) {
+                match engine::prepare_source(Path::new(&path), &resize) {
                     Ok(src) => {
                         *guard = Some(CacheEntry {
                             path: path.clone(),
-                            max_dimension: max_dim,
+                            resize,
                             source: src,
                         });
                     }

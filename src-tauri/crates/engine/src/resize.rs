@@ -16,7 +16,7 @@ pub fn downscale_to_long_edge(
     let scale = f64::from(max_long_edge) / f64::from(long);
     let nw = ((f64::from(w) * scale).round() as u32).max(1);
     let nh = ((f64::from(h) * scale).round() as u32).max(1);
-    resize_to(img, nw, nh)
+    resize_exact(img, nw, nh)
 }
 
 /// Downscale by `factor` in `(0, 1)`. A `factor >= 1.0` returns a clone (never upscale).
@@ -26,12 +26,13 @@ pub fn downscale_by_factor(img: &DynamicImage, factor: f64) -> Result<DynamicIma
     }
     let nw = ((f64::from(img.width()) * factor).round() as u32).max(1);
     let nh = ((f64::from(img.height()) * factor).round() as u32).max(1);
-    resize_to(img, nw, nh)
+    resize_exact(img, nw, nh)
 }
 
-/// High-quality Lanczos3 resample via `fast_image_resize`. Everything is converted to RGBA8 so a
-/// single code path covers all source pixel formats.
-fn resize_to(img: &DynamicImage, nw: u32, nh: u32) -> Result<DynamicImage, EngineError> {
+/// High-quality Lanczos3 resample to EXACTLY `nw x nh` via `fast_image_resize` (upscales or
+/// downscales as needed). Everything is converted to RGBA8 so a single code path covers all source
+/// pixel formats.
+pub fn resize_exact(img: &DynamicImage, nw: u32, nh: u32) -> Result<DynamicImage, EngineError> {
     let src_rgba = img.to_rgba8();
     let (w, h) = (src_rgba.width(), src_rgba.height());
     let src = Image::from_vec_u8(w, h, src_rgba.into_raw(), PixelType::U8x4)

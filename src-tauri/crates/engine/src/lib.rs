@@ -6,6 +6,7 @@
 //! is therefore unit-testable without the webview stack.
 
 pub mod batch;
+pub mod crop;
 pub mod decode;
 pub mod encode;
 pub mod error;
@@ -16,11 +17,12 @@ pub mod resize;
 pub mod target;
 
 pub use batch::{compress_batch, is_supported, scan_inputs, SUPPORTED_EXTENSIONS};
+pub use crop::{cover_crop_rect, cover_crop_resize, CropRect};
 pub use encode::EncodeFormat;
 pub use error::EngineError;
 pub use model::{
-    BatchItem, BatchSummary, CollisionPolicy, FileResult, InputFile, Options, Outcome,
-    OutputFormat, Progress,
+    Anchor, BatchItem, BatchSummary, CollisionPolicy, FileResult, InputFile, Options, Outcome,
+    OutputFormat, Progress, ResizeMode,
 };
 pub use preview::{
     prepare_source, preview, preview_from_source, thumbnail, Preview, PreviewSource,

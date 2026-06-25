@@ -28,7 +28,7 @@ fn generous_cap_keeps_max_quality_and_full_size() {
         .len() as u64
         + 10_000;
 
-    let res = compress_to_target(&img, cap, jpeg(), &opts)
+    let res = compress_to_target(&img, cap, jpeg(), &opts, true)
         .unwrap()
         .expect("a generous cap is reachable");
     assert!(!res.downscaled, "no downscaling needed");
@@ -42,7 +42,7 @@ fn lossless_png_meets_a_tight_cap_via_downscale() {
     let full = encode(&img, EncodeFormat::Png, None).unwrap().len() as u64;
     let cap = full / 4;
 
-    let res = compress_to_target(&img, cap, EncodeFormat::Png, &opts)
+    let res = compress_to_target(&img, cap, EncodeFormat::Png, &opts, true)
         .unwrap()
         .expect("reachable by downscaling");
     assert!(res.downscaled, "PNG has no quality knob, so it must shrink");

@@ -14,15 +14,15 @@ beforeEach(() => {
 })
 
 describe('buildOptions', () => {
-  it('converts a KB cap to bytes and omits maxDimension when disabled', () => {
+  it('converts a KB cap to bytes and a disabled fit limit yields null maxDimension', () => {
     const o = buildOptions({ ...DEFAULT_SETTINGS, capValue: 500, capUnit: 'KB', maxDimensionEnabled: false })
     expect(o.capBytes).toBe(500 * 1024)
-    expect(o.maxDimension).toBeNull()
+    expect(o.resize).toEqual({ mode: 'fit', maxDimension: null })
     expect(o.outputFormat).toBe('jpeg')
     expect(o.minLongEdge).toBe(16)
   })
 
-  it('includes maxDimension when enabled and converts an MB cap', () => {
+  it('includes the fit maxDimension when enabled and converts an MB cap', () => {
     const o = buildOptions({
       ...DEFAULT_SETTINGS,
       capValue: 2,
@@ -31,7 +31,19 @@ describe('buildOptions', () => {
       maxDimension: 1600,
     })
     expect(o.capBytes).toBe(2 * 1024 * 1024)
-    expect(o.maxDimension).toBe(1600)
+    expect(o.resize).toEqual({ mode: 'fit', maxDimension: 1600 })
+  })
+
+  it('builds an exact crop-to-fill resize from the exact-mode settings', () => {
+    const o = buildOptions({
+      ...DEFAULT_SETTINGS,
+      resizeMode: 'exact',
+      exactWidth: 1920,
+      exactHeight: 1080,
+      exactAnchor: 'center',
+      exactAllowUpscale: true,
+    })
+    expect(o.resize).toEqual({ mode: 'exact', width: 1920, height: 1080, anchor: 'center', allowUpscale: true })
   })
 })
 

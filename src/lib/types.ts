@@ -5,9 +5,17 @@ export type OutputFormat = 'keep' | 'jpeg' | 'png' | 'avif'
 
 export type CollisionPolicy = 'suffix' | 'overwrite' | 'skip'
 
+/** Which edge a crop is anchored to on the cropped axis when producing an exact size. */
+export type Anchor = 'start' | 'center' | 'end'
+
+/** How the engine sizes the output before the byte-cap search (mirrors the Rust `ResizeMode`). */
+export type ResizeMode =
+  | { mode: 'fit'; maxDimension: number | null }
+  | { mode: 'exact'; width: number; height: number; anchor: Anchor; allowUpscale: boolean }
+
 export interface Options {
   capBytes: number
-  maxDimension: number | null
+  resize: ResizeMode
   outputFormat: OutputFormat
   outputDir: string | null
   suffix: string

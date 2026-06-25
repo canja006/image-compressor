@@ -22,11 +22,17 @@ pub struct TargetResult {
 /// Returns `Ok(Some(result))` with the largest file that still fits `cap_bytes`, `Ok(None)` if the
 /// cap is unreachable even after downscaling to the floor, or `Err` only on a genuine encode
 /// failure (never on "too big" — that is data, not an error).
+///
+/// `allow_downscale` controls the dimension fallback: in fit mode it is `true`, so a too-large image
+/// shrinks dimensions to meet the cap. In exact-size mode it is `false` — dimensions are locked to
+/// the caller's target, only quality varies, and a cap that cannot be met at those dimensions is
+/// reported `Unreachable` rather than silently delivering a smaller image.
 pub fn compress_to_target(
     img: &DynamicImage,
     cap_bytes: u64,
     fmt: EncodeFormat,
     opts: &Options,
+    allow_downscale: bool,
 ) -> Result<Option<TargetResult>, EngineError> {
     let range = fmt.quality_range(opts);
     let q_lo = range.map(|(lo, _)| lo);
@@ -41,6 +47,10 @@ pub fn compress_to_target(
         let smallest = encode(&work, fmt, q_lo)?;
 
         if smallest.len() as u64 > cap_bytes {
+            // Dimensions are locked (exact mode): the cap simply can't be met here.
+            if !allow_downscale {
+                return Ok(None);
+            }
             let long = w.max(h);
             if long <= opts.min_long_edge {
                 return Ok(None); // can't shrink further and still over cap -> unreachable
@@ -152,7 +162,7 @@ mod tests {
             .len() as u64;
         let cap = (lo + hi) / 2;
 
-        let res = compress_to_target(&img, cap, jpeg(), &opts)
+        let res = compress_to_target(&img, cap, jpeg(), &opts, true)
             .unwrap()
             .expect("cap should be reachable");
         assert!(
@@ -176,7 +186,7 @@ mod tests {
         // A midpoint cap forces an interior solution (no downscale, q below max).
         let cap = (lo + hi) / 2;
 
-        let res = compress_to_target(&img, cap, jpeg(), &opts)
+        let res = compress_to_target(&img, cap, jpeg(), &opts, true)
             .unwrap()
             .expect("cap should be reachable");
         let q = res.quality.expect("jpeg result has a quality");
@@ -209,7 +219,7 @@ mod tests {
             .len() as u64;
         let cap = full_min / 4;
 
-        let res = compress_to_target(&img, cap, jpeg(), &opts)
+        let res = compress_to_target(&img, cap, jpeg(), &opts, true)
             .unwrap()
             .expect("cap should be reachable via downscale");
         assert!(res.downscaled, "expected dimension downscaling");
@@ -229,7 +239,7 @@ mod tests {
         let img = test_image(1024, 1024);
         let opts = Options::default();
         // 10 bytes is smaller than any real JPEG header — unreachable at any size.
-        let res = compress_to_target(&img, 10, jpeg(), &opts).unwrap();
+        let res = compress_to_target(&img, 10, jpeg(), &opts, true).unwrap();
         assert!(
             res.is_none(),
             "an impossible cap must be Unreachable, not a panic or a fit"
@@ -241,10 +251,51 @@ mod tests {
         let img = test_image(256, 256);
         let opts = Options::default();
         let big_cap = encode(&img, EncodeFormat::Png, None).unwrap().len() as u64 + 1;
-        let res = compress_to_target(&img, big_cap, EncodeFormat::Png, &opts)
+        let res = compress_to_target(&img, big_cap, EncodeFormat::Png, &opts, true)
             .unwrap()
             .expect("png under a generous cap is reachable");
         assert_eq!(res.quality, None);
         assert!(res.bytes.len() as u64 <= big_cap);
+    }
+
+    #[test]
+    fn locked_dimensions_never_downscale() {
+        // A cap only dimension-downscaling could meet: in fit mode it succeeds by shrinking, but
+        // with dimensions locked it must report unreachable instead of silently shrinking.
+        let img = test_image(2000, 2000);
+        let opts = Options::default();
+        let cap = encode(&img, jpeg(), Some(opts.jpeg_quality_min))
+            .unwrap()
+            .len() as u64
+            / 4;
+
+        let fit = compress_to_target(&img, cap, jpeg(), &opts, true)
+            .unwrap()
+            .expect("fit mode reaches the cap by downscaling");
+        assert!(fit.downscaled, "fit mode should have downscaled");
+
+        let locked = compress_to_target(&img, cap, jpeg(), &opts, false).unwrap();
+        assert!(
+            locked.is_none(),
+            "locked dimensions must be unreachable, not a downscaled fit"
+        );
+    }
+
+    #[test]
+    fn locked_dimensions_keep_size_when_reachable() {
+        // A reachable cap with dimensions locked: quality varies but width/height are untouched.
+        let img = test_image(512, 512);
+        let opts = Options::default();
+        let hi = encode(&img, jpeg(), Some(opts.jpeg_quality_max))
+            .unwrap()
+            .len() as u64;
+        let cap = hi + 1; // comfortably reachable at full quality
+
+        let res = compress_to_target(&img, cap, jpeg(), &opts, false)
+            .unwrap()
+            .expect("reachable cap at locked dimensions");
+        assert!(!res.downscaled, "locked dimensions never downscale");
+        assert_eq!((res.width, res.height), (512, 512));
+        assert!(res.bytes.len() as u64 <= cap);
     }
 }

@@ -1,6 +1,8 @@
 //! The serde contract with the TypeScript frontend: camelCase fields and tagged `kind` outcomes.
 
-use engine::model::{CollisionPolicy, FileResult, Options, Outcome, OutputFormat};
+use engine::model::{
+    Anchor, CollisionPolicy, FileResult, Options, Outcome, OutputFormat, ResizeMode,
+};
 
 #[test]
 fn options_use_camel_case_and_round_trip() {
@@ -39,6 +41,50 @@ fn outcome_is_tagged_by_kind() {
     assert!(
         unreachable.contains("\"kind\":\"unreachable\""),
         "{unreachable}"
+    );
+}
+
+#[test]
+fn resize_mode_is_tagged_and_camel_case() {
+    // Fit (the default) carries an optional longest-edge cap.
+    let fit = serde_json::to_string(&ResizeMode::Fit {
+        max_dimension: Some(1920),
+    })
+    .unwrap();
+    assert!(fit.contains("\"mode\":\"fit\""), "json: {fit}");
+    assert!(fit.contains("\"maxDimension\":1920"), "json: {fit}");
+
+    // Exact locks an output size with an anchor and an upscale flag.
+    let exact = serde_json::to_string(&ResizeMode::Exact {
+        width: 1920,
+        height: 1080,
+        anchor: Anchor::Center,
+        allow_upscale: true,
+    })
+    .unwrap();
+    assert!(exact.contains("\"mode\":\"exact\""), "json: {exact}");
+    assert!(exact.contains("\"width\":1920"), "json: {exact}");
+    assert!(exact.contains("\"height\":1080"), "json: {exact}");
+    assert!(exact.contains("\"anchor\":\"center\""), "json: {exact}");
+    assert!(exact.contains("\"allowUpscale\":true"), "json: {exact}");
+
+    // The frontend sends this exact shape; confirm it round-trips back into the enum.
+    let back: ResizeMode = serde_json::from_str(&exact).unwrap();
+    assert_eq!(
+        back,
+        ResizeMode::Exact {
+            width: 1920,
+            height: 1080,
+            anchor: Anchor::Center,
+            allow_upscale: true,
+        }
+    );
+
+    // Options nests the resize object under "resize".
+    let opts = serde_json::to_string(&Options::default()).unwrap();
+    assert!(
+        opts.contains("\"resize\":{\"mode\":\"fit\""),
+        "json: {opts}"
     );
 }
 

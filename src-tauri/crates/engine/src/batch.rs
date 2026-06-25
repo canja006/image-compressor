@@ -1,10 +1,13 @@
 //! Batch orchestration: fan out over files with rayon, isolate failures per file, honor a shared
 //! cancel flag, and report progress as each file finishes.
 
+use crate::crop::cover_crop_resize;
 use crate::decode::decode;
 use crate::encode::EncodeFormat;
 use crate::error::EngineError;
-use crate::model::{BatchItem, FileResult, InputFile, Options, Outcome, OutputFormat, Progress};
+use crate::model::{
+    BatchItem, FileResult, InputFile, Options, Outcome, OutputFormat, Progress, ResizeMode,
+};
 use crate::naming::{resolve_output_path, Resolved};
 use crate::resize::downscale_to_long_edge;
 use crate::target::compress_to_target;
@@ -163,10 +166,32 @@ fn process_one(path: &Path, options: &Options, cap: u64) -> FileResult {
 
     let fmt = resolve_format(options.output_format, &img, options.background);
 
-    // Optional pre-downscale to the max dimension before the size search.
-    let base = match options.max_dimension {
-        Some(maxd) => match downscale_to_long_edge(&img, maxd) {
-            Ok(i) => i,
+    // Size the image per the resize mode before the cap search. Fit may pre-downscale by the longest
+    // edge and lets the search shrink further; Exact crops to fill the locked target, after which the
+    // search varies quality only (`allow_downscale = false`).
+    let (base, allow_downscale) = match options.resize {
+        ResizeMode::Fit { max_dimension } => {
+            let sized = match max_dimension {
+                Some(maxd) => match downscale_to_long_edge(&img, maxd) {
+                    Ok(i) => i,
+                    Err(e) => {
+                        result.outcome = Outcome::Failed {
+                            reason: e.to_string(),
+                        };
+                        return result;
+                    }
+                },
+                None => img,
+            };
+            (sized, true)
+        }
+        ResizeMode::Exact {
+            width,
+            height,
+            anchor,
+            allow_upscale,
+        } => match cover_crop_resize(&img, width, height, anchor, allow_upscale) {
+            Ok(i) => (i, false),
             Err(e) => {
                 result.outcome = Outcome::Failed {
                     reason: e.to_string(),
@@ -174,10 +199,9 @@ fn process_one(path: &Path, options: &Options, cap: u64) -> FileResult {
                 return result;
             }
         },
-        None => img,
     };
 
-    match compress_to_target(&base, cap, fmt, options) {
+    match compress_to_target(&base, cap, fmt, options, allow_downscale) {
         Ok(Some(target)) => match resolve_output_path(path, options, fmt.extension()) {
             Resolved::Path(out) => match std::fs::write(&out, &target.bytes) {
                 Ok(()) => {
@@ -200,10 +224,15 @@ fn process_one(path: &Path, options: &Options, cap: u64) -> FileResult {
         },
         Ok(None) => {
             result.outcome = Outcome::Unreachable {
-                reason: format!(
-                    "cap of {} bytes not reachable above {}px",
-                    cap, options.min_long_edge
-                ),
+                reason: match options.resize {
+                    ResizeMode::Exact { width, height, .. } => format!(
+                        "cap of {cap} bytes not reachable at the locked {width}×{height} size"
+                    ),
+                    ResizeMode::Fit { .. } => format!(
+                        "cap of {} bytes not reachable above {}px",
+                        cap, options.min_long_edge
+                    ),
+                },
             };
         }
         Err(e) => {
@@ -266,7 +295,7 @@ fn copy_as_is(path: &Path, options: &Options) -> Result<Option<PathBuf>, EngineE
 mod tests {
     use super::*;
     use crate::encode::{encode, EncodeFormat};
-    use crate::model::CollisionPolicy;
+    use crate::model::{Anchor, CollisionPolicy};
     use image::{Rgb, RgbImage};
     use std::sync::atomic::AtomicBool;
 
@@ -376,6 +405,77 @@ mod tests {
         assert!(
             matches!(summary.results[0].outcome, Outcome::Unreachable { .. }),
             "the per-item override should force unreachable, not the lenient batch cap"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exact_mode_outputs_locked_dimensions() {
+        let dir = std::env::temp_dir().join(format!("ic_exact_ok_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = write_test_jpeg(&dir, "wide.jpg", 800, 600);
+
+        let options = Options {
+            cap_bytes: 5_000_000, // generous: reachable at the locked size
+            skip_if_under_cap: false,
+            collision: CollisionPolicy::Overwrite,
+            output_dir: Some(dir.clone()),
+            resize: ResizeMode::Exact {
+                width: 400,
+                height: 400,
+                anchor: Anchor::Center,
+                allow_upscale: true,
+            },
+            ..Options::default()
+        };
+        let cancel = AtomicBool::new(false);
+        let summary = compress_batch(&[BatchItem::new(f)], &options, &cancel, &|_p| {});
+
+        match &summary.results[0].outcome {
+            Outcome::Compressed {
+                width,
+                height,
+                downscaled,
+                final_bytes,
+                ..
+            } => {
+                assert_eq!((*width, *height), (400, 400), "exact size must be honored");
+                assert!(!downscaled, "exact mode never downscales dimensions");
+                assert!(*final_bytes <= options.cap_bytes);
+            }
+            other => panic!("expected Compressed at 400x400, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exact_mode_unreachable_cap_keeps_locked_size() {
+        let dir = std::env::temp_dir().join(format!("ic_exact_unreach_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = write_test_jpeg(&dir, "wide.jpg", 800, 600);
+
+        // 10 bytes is impossible for any real JPEG; with dimensions locked the engine must report
+        // Unreachable rather than fall back to a smaller image.
+        let options = Options {
+            cap_bytes: 10,
+            skip_if_under_cap: false,
+            collision: CollisionPolicy::Overwrite,
+            output_dir: Some(dir.clone()),
+            resize: ResizeMode::Exact {
+                width: 400,
+                height: 400,
+                anchor: Anchor::Center,
+                allow_upscale: true,
+            },
+            ..Options::default()
+        };
+        let cancel = AtomicBool::new(false);
+        let summary = compress_batch(&[BatchItem::new(f)], &options, &cancel, &|_p| {});
+        assert!(
+            matches!(summary.results[0].outcome, Outcome::Unreachable { .. }),
+            "an impossible cap at locked dimensions must be Unreachable, not a shrunk image"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

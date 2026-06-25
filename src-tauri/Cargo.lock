@@ -830,7 +830,7 @@ checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
 
 [[package]]
 name = "engine"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "fast_image_resize",
  "image",
@@ -1650,7 +1650,7 @@ dependencies = [
 
 [[package]]
 name = "image-compressor"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "engine",
