@@ -1,10 +1,12 @@
 # Image Compressor (target-size) — Roadmap
 
-> **Status: implemented through v0.3.3.** Tier 1 (Phases 0–3) and Tier 2 (Phase 4) are complete,
+> **Status: implemented through v0.4.0.** Tier 1 (Phases 0–3) and Tier 2 (Phase 4) are complete,
 > and Phase 6 (dual-OS GitHub Actions CI + release) is in place. Tier 3 (Phase 5) is partially
 > done — `oxipng` lossless-PNG optimization and the total-folder budget shipped; mozjpeg/libwebp,
-> watch folder, and Windows shell integration remain optional. See the README for the current
-> feature set and the published GitHub Release for installers. This document is the original brief.
+> watch folder, and Windows shell integration remain optional. Beyond the original roadmap, **v0.4.0**
+> added an **exact-size crop-to-fill** resize mode (Fit / Exact, with anchor and locked dimensions).
+> See the README for the current feature set and the published GitHub Release for installers. This
+> document is the original brief.
 
 Build in phases. Each phase ends green (`npm run verify`, both TS and Rust) and
 is committed before the next. Target platform is Windows.

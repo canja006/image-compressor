@@ -106,7 +106,7 @@ You cannot build both installers on one machine — each OS's bundle must be bui
 - Windows → `.msi` (WiX) and `.exe` (NSIS)
 - macOS → universal `.dmg` / `.app` (Apple Silicon + Intel)
 
-Push a tag like `v0.3.3` to trigger it; the workflow creates a draft GitHub Release and attaches the installers. Optional code signing — Windows Authenticode, macOS Developer ID + notarization — is left to the maintainer.
+Push a tag like `v0.4.0` to trigger it; the workflow creates a draft GitHub Release and attaches the installers. Optional code signing — Windows Authenticode, macOS Developer ID + notarization — is left to the maintainer.
 
 ## Encoder backend (a deliberate decision)
 
