@@ -1,7 +1,7 @@
 {
   "name": "image-compressor",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Target-size image compressor — compress and resize images to hit a file-size cap.",
   "scripts": {

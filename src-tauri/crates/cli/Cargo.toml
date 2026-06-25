@@ -2,7 +2,7 @@
 # same compression code paths back both the GUI and scripting/CI use. `clap` is permissively licensed.
 [package]
 name = "imgc"
-version = "0.4.0"
+version = "0.5.0"
 description = "Headless image compressor — compress images to a target file-size cap from the terminal."
 authors = ["Antti Jakunaho"]
 edition = "2021"
